@@ -853,7 +853,7 @@ WHERE no.status IN ('pending', 'retrying', 'running')
   AND no.operation_type IN ('add_user', 'update_user', 'remove_user', 'disable_user', 'enable_user')
   AND sync_ops.operation_type = 'sync_config'
   AND no.id <= sync_ops.id
-  AND sync_ops.status IN ('pending', 'retrying')
+  AND sync_ops.status IN ('pending', 'retrying', 'running')
   AND LOWER(COALESCE(sync_ops.payload, '')) NOT LIKE '%"config_json"%'
   AND (
     LOWER(COALESCE(sync_ops.payload, '')) LIKE '%"source":"runtime_backlog"%'
@@ -883,7 +883,7 @@ WHERE status IN ('pending', 'retrying', 'running')
     WHERE sync_ops.node_id = node_operations.node_id
       AND sync_ops.operation_type = 'sync_config'
       AND node_operations.id <= sync_ops.id
-      AND sync_ops.status IN ('pending', 'retrying')
+      AND sync_ops.status IN ('pending', 'retrying', 'running')
       AND LOWER(COALESCE(sync_ops.payload, '')) NOT LIKE '%"config_json"%'
       AND (
         LOWER(COALESCE(sync_ops.payload, '')) LIKE '%"source":"runtime_backlog"%'
