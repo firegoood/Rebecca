@@ -204,32 +204,20 @@ func (c Controller) userOperationRequiresConfigSync(ctx context.Context, node No
 	if !isRuntimeUserOperation(operation.OperationType) || !operation.UserID.Valid {
 		return false, nil
 	}
-	runtimeConfig, err := c.repo.OVRuntime(ctx, node.ID)
+	inbounds, err := xrayconfig.NewRepository(c.repo.db, c.repo.dialect, xrayconfig.Options{}).FullInbounds(ctx)
 	if err != nil {
 		return false, err
 	}
-	if len(runtimeConfig.Inbounds) > 0 {
-		return true, nil
+	target := xrayconfig.NodeTargetID(node.ID)
+	for _, inbound := range inbounds {
+		switch strings.ToLower(stringValue(inbound["protocol"])) {
+		case xrayconfig.OVProtocol, xrayconfig.L2TPProtocol, xrayconfig.PPTPProtocol, xrayconfig.WGProtocol:
+			if OVInboundMatchesTarget(inbound, target) {
+				return true, nil
+			}
+		}
 	}
-	l2tpRuntimeConfig, err := c.repo.L2TPRuntime(ctx, node.ID)
-	if err != nil {
-		return false, err
-	}
-	if len(l2tpRuntimeConfig.Inbounds) > 0 {
-		return true, nil
-	}
-	pptpRuntimeConfig, err := c.repo.PPTPRuntime(ctx, node.ID)
-	if err != nil {
-		return false, err
-	}
-	if len(pptpRuntimeConfig.Inbounds) > 0 {
-		return true, nil
-	}
-	wgRuntimeConfig, err := c.repo.WGRuntime(ctx, node.ID)
-	if err != nil {
-		return false, err
-	}
-	return len(wgRuntimeConfig.Inbounds) > 0, nil
+	return false, nil
 }
 
 func (c Controller) loadRuntimeConfigData(ctx context.Context) (*runtimeConfigData, error) {
