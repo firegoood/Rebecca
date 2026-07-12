@@ -204,6 +204,20 @@ func (c Controller) userOperationRequiresConfigSync(ctx context.Context, node No
 	if !isRuntimeUserOperation(operation.OperationType) || !operation.UserID.Valid {
 		return false, nil
 	}
+	var serviceID sql.NullInt64
+	if err := c.repo.db.QueryRowContext(ctx, `SELECT service_id FROM users WHERE id = ?`, operation.UserID.Int64).Scan(&serviceID); err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, err
+	}
+	if !serviceID.Valid || serviceID.Int64 <= 0 {
+		return false, nil
+	}
+	serviceTags, err := c.repo.ServiceAllowedTags(ctx)
+	if err != nil {
+		return false, err
+	}
 	inbounds, err := xrayconfig.NewRepository(c.repo.db, c.repo.dialect, xrayconfig.Options{}).FullInbounds(ctx)
 	if err != nil {
 		return false, err
@@ -212,7 +226,8 @@ func (c Controller) userOperationRequiresConfigSync(ctx context.Context, node No
 	for _, inbound := range inbounds {
 		switch strings.ToLower(stringValue(inbound["protocol"])) {
 		case xrayconfig.OVProtocol, xrayconfig.L2TPProtocol, xrayconfig.PPTPProtocol, xrayconfig.WGProtocol:
-			if OVInboundMatchesTarget(inbound, target) {
+			tag := stringValue(inbound["tag"])
+			if tag != "" && serviceTags[serviceID.Int64][tag] && OVInboundMatchesTarget(inbound, target) {
 				return true, nil
 			}
 		}
