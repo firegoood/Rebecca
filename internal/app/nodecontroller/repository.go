@@ -60,6 +60,7 @@ const (
 	runtimeBacklogSyncThreshold  = 25
 	runtimeBacklogSyncNodeLimit  = 50
 	runtimeBacklogSyncPayloadTag = "runtime_backlog"
+	syncConfigRetryBackoff       = 5 * time.Minute
 )
 
 func NewRepository(db *sql.DB, dialect string) Repository {
@@ -497,10 +498,14 @@ func (r Repository) PendingOperations(ctx context.Context, nodeID int64, limit i
 	if nodeID <= 0 {
 		return r.pendingOperationsFair(ctx, limit)
 	}
+	retryCutoff := r.timeArg(time.Now().UTC().Add(-syncConfigRetryBackoff))
 	query := `SELECT id, operation_type, node_id, user_id, payload, attempts
 FROM node_operations
-WHERE status IN ('pending', 'retrying')`
-	args := []any{}
+WHERE (
+	status = 'pending'
+	OR (status = 'retrying' AND (operation_type != 'sync_config' OR updated_at <= ?))
+)`
+	args := []any{retryCutoff}
 	query += ` AND node_id = ?`
 	args = append(args, nodeID)
 	query += ` ORDER BY id LIMIT ?`
@@ -652,6 +657,7 @@ func (r Repository) pendingOperationsFair(ctx context.Context, limit int) ([]Ope
 	if limit < perNodeCap {
 		perNodeCap = limit
 	}
+	retryCutoff := r.timeArg(time.Now().UTC().Add(-syncConfigRetryBackoff))
 	query := `WITH ranked_operations AS (
 	SELECT
 		no.id,
@@ -689,14 +695,17 @@ func (r Repository) pendingOperationsFair(ctx context.Context, limit int) ([]Ope
 		END AS priority
 	FROM node_operations no
 	LEFT JOIN nodes n ON n.id = no.node_id
-	WHERE no.status IN ('pending', 'retrying')
+	WHERE (
+		no.status = 'pending'
+		OR (no.status = 'retrying' AND (no.operation_type != 'sync_config' OR no.updated_at <= ?))
+	)
 )
 SELECT id, operation_type, node_id, user_id, payload, attempts
 FROM ranked_operations
 WHERE node_rank <= ?
 ORDER BY priority, node_rank, operation_priority, COALESCE(node_id, -1), id
 LIMIT ?`
-	rows, err := r.db.QueryContext(ctx, query, perNodeCap, limit)
+	rows, err := r.db.QueryContext(ctx, query, retryCutoff, perNodeCap, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -61,6 +61,17 @@ VALUES ('sync_config', 7, 42, '{"config_json":"{}"}', 'pending', 'op-1', CURRENT
 	if err := repo.MarkOperationRetrying(ctx, rows[0].ID, "node down"); err != nil {
 		t.Fatal(err)
 	}
+	assertRepositoryInt64(t, db, `SELECT attempts FROM node_operations WHERE id = 1`, 1)
+	rows, err = repo.PendingOperations(ctx, 7, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expected fresh sync_config retry to wait for backoff, got %#v", rows)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE node_operations SET updated_at = '2000-01-01 00:00:00' WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
 	rows, err = repo.PendingOperations(ctx, 7, 10)
 	if err != nil {
 		t.Fatal(err)
