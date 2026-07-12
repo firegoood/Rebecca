@@ -1073,6 +1073,12 @@ func (r Repository) QueueSyncConfig(ctx context.Context, nodeID *int64, payload 
 		}
 		payloadJSON = encoded
 	}
+	if canCoalesceRuntimeSyncOperation(OperationRow{OperationType: "sync_config", Payload: payloadJSON}) {
+		existing, err := r.coalescePendingSyncConfig(ctx, nodeID, now)
+		if err != nil || existing {
+			return err
+		}
+	}
 	idempotencySource := fmt.Sprintf("sync_config:%s:%d", string(payloadJSON), now.UnixNano())
 	if nodeID != nil {
 		idempotencySource = fmt.Sprintf("sync_config:%d:%s:%d", *nodeID, string(payloadJSON), now.UnixNano())
@@ -1090,6 +1096,35 @@ VALUES ('sync_config', ?, NULL, ?, 'pending', 0, ?, ?, ?)`,
 		r.timeArg(now),
 	)
 	return err
+}
+
+func (r Repository) coalescePendingSyncConfig(ctx context.Context, nodeID *int64, now time.Time) (bool, error) {
+	where := `operation_type = 'sync_config'
+  AND status IN ('pending', 'retrying')
+  AND LOWER(COALESCE(payload, '')) NOT LIKE '%"config_json"%'`
+	args := []any{}
+	if nodeID != nil {
+		where += ` AND node_id = ?`
+		args = append(args, *nodeID)
+	} else {
+		where += ` AND node_id IS NULL`
+	}
+
+	var keep sql.NullInt64
+	if err := r.db.QueryRowContext(ctx, `SELECT MAX(id) FROM node_operations WHERE `+where, args...).Scan(&keep); err != nil {
+		return false, err
+	}
+	if !keep.Valid {
+		return false, nil
+	}
+
+	updateArgs := []any{r.timeArg(now)}
+	updateArgs = append(updateArgs, args...)
+	updateArgs = append(updateArgs, keep.Int64)
+	_, err := r.db.ExecContext(ctx, `UPDATE node_operations
+SET status = 'done', last_error = NULL, updated_at = ?
+WHERE `+where+` AND id <> ?`, updateArgs...)
+	return true, err
 }
 
 func (r Repository) QueueNodeSpecificRetry(ctx context.Context, nodeID int64, operation OperationRow) error {
