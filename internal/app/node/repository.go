@@ -220,25 +220,37 @@ func (r Repository) UpdateNode(ctx context.Context, nodeID int64, payload NodeMo
 			markConnectionChanged()
 		}
 	}
+	finalStatus := current.Status
 	statusReconnectRequested := false
 	if payload.Status != nil {
 		status := strings.TrimSpace(*payload.Status)
 		switch status {
 		case StatusDisabled:
-			add("status", StatusDisabled)
-			add("xray_version", nil)
-			add("message", nil)
+			if status != current.Status {
+				add("status", StatusDisabled)
+				add("xray_version", nil)
+				add("message", nil)
+				add("last_status_change", dbTimestamp(r.now().UTC()))
+				finalStatus = StatusDisabled
+			}
 		case StatusLimited:
-			add("status", StatusLimited)
-			add("message", "Data limit reached")
+			if status != current.Status {
+				add("status", StatusLimited)
+				add("message", "Data limit reached")
+				add("last_status_change", dbTimestamp(r.now().UTC()))
+				finalStatus = StatusLimited
+			}
 		case StatusConnected, StatusConnecting, StatusError:
-			add("status", StatusConnecting)
-			add("message", nil)
-			statusReconnectRequested = true
+			if status != current.Status {
+				add("status", StatusConnecting)
+				add("message", nil)
+				add("last_status_change", dbTimestamp(r.now().UTC()))
+				finalStatus = StatusConnecting
+				statusReconnectRequested = true
+			}
 		default:
 			return NodeResponse{}, wrapInvalid("invalid node status")
 		}
-		add("last_status_change", dbTimestamp(r.now().UTC()))
 	}
 	if payload.UsageCoefficient != nil {
 		if *payload.UsageCoefficient <= 0 {
@@ -249,18 +261,31 @@ func (r Repository) UpdateNode(ctx context.Context, nodeID int64, payload NodeMo
 	if payload.GeoMode != nil {
 		add("geo_mode", defaultString(*payload.GeoMode, GeoModeDefault))
 	}
-	if payload.XrayConfigMode != nil {
-		mode := defaultString(*payload.XrayConfigMode, XrayConfigModeDefault)
-		add("xray_config_mode", mode)
-		if mode == XrayConfigModeDefault {
-			add("xray_config", nil)
-		}
-		markConnectionChanged()
-	}
 	if len(payload.XrayConfig) > 0 {
 		add("xray_config", string(payload.XrayConfig))
 		add("xray_config_mode", XrayConfigModeCustom)
 		markConnectionChanged()
+	} else if payload.XrayConfigMode != nil {
+		currentHasStoredConfig, err := r.nodeStoredXrayConfigExistsTx(ctx, tx, nodeID)
+		if err != nil {
+			return NodeResponse{}, err
+		}
+		mode := defaultString(*payload.XrayConfigMode, XrayConfigModeDefault)
+		switch mode {
+		case XrayConfigModeCustom:
+			if current.XrayConfigMode != XrayConfigModeCustom {
+				add("xray_config_mode", XrayConfigModeCustom)
+				markConnectionChanged()
+			}
+		case XrayConfigModeDefault:
+			if current.XrayConfigMode != XrayConfigModeCustom || !currentHasStoredConfig {
+				add("xray_config_mode", XrayConfigModeDefault)
+				add("xray_config", nil)
+				markConnectionChanged()
+			}
+		default:
+			return NodeResponse{}, wrapInvalid("invalid xray_config_mode")
+		}
 	}
 	if payload.DataLimit != nil {
 		add("data_limit", nullableInt64Ptr(payload.DataLimit))
@@ -313,10 +338,11 @@ func (r Repository) UpdateNode(ctx context.Context, nodeID int64, payload NodeMo
 			markConnectionChanged()
 		}
 	}
-	if payload.Status == nil && connectionChanged && current.Status != StatusDisabled && current.Status != StatusLimited {
+	if connectionChanged && !statusReconnectRequested && current.Status != StatusDisabled && current.Status != StatusLimited && finalStatus != StatusDisabled && finalStatus != StatusLimited {
 		add("status", StatusConnecting)
 		add("message", nil)
 		add("last_status_change", dbTimestamp(r.now().UTC()))
+		finalStatus = StatusConnecting
 	}
 	if len(updates) > 0 {
 		args = append(args, nodeID)
@@ -327,11 +353,7 @@ func (r Repository) UpdateNode(ctx context.Context, nodeID int64, payload NodeMo
 			return NodeResponse{}, err
 		}
 	}
-	updatedStatus := current.Status
-	if payload.Status != nil {
-		updatedStatus = strings.TrimSpace(*payload.Status)
-	}
-	if (connectionChanged || statusReconnectRequested) && updatedStatus != StatusDisabled && updatedStatus != StatusLimited {
+	if (connectionChanged || statusReconnectRequested) && finalStatus != StatusDisabled && finalStatus != StatusLimited {
 		if err := r.enqueueNodeOperationTx(ctx, tx, NodeOperationSyncConfig, &nodeID, nil, map[string]any{"node_id": nodeID}, r.now().UTC()); err != nil {
 			return NodeResponse{}, err
 		}
@@ -527,6 +549,17 @@ func (r Repository) consumePendingCertificateTx(ctx context.Context, tx *sql.Tx,
 	return row, nil
 }
 
+func (r Repository) nodeStoredXrayConfigExistsTx(ctx context.Context, tx *sql.Tx, nodeID int64) (bool, error) {
+	var raw sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT xray_config FROM nodes WHERE id = ? LIMIT 1`, nodeID).Scan(&raw)
+	if err == nil {
+		return raw.Valid && strings.TrimSpace(raw.String) != "", nil
+	}
+	if isMissingColumnError(err) {
+		return false, nil
+	}
+	return false, err
+}
 func (r Repository) getNode(ctx context.Context, q queryer, nodeID int64, defaultCert string) (NodeResponse, error) {
 	var row NodeResponse
 	var dataLimit, proxyPort sql.NullInt64
@@ -803,6 +836,13 @@ func int64PtrFromNull(value sql.NullInt64) *int64 {
 	return &value.Int64
 }
 
+func isMissingColumnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "no such column") || strings.Contains(lower, "unknown column")
+}
 func isUniqueConstraint(err error) bool {
 	if err == nil {
 		return false
