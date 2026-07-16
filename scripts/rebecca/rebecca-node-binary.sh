@@ -11,14 +11,7 @@ NODE_VERSION_SET=0
 REBECCA_NODE_SCRIPT_FLAVOR="${REBECCA_NODE_SCRIPT_FLAVOR:-binary}"
 REBECCA_NODE_SCRIPT_SOURCE_FILE="${REBECCA_NODE_SCRIPT_SOURCE_FILE:-rebecca-node-binary.sh}"
 
-SCRIPT_NAME=$(basename "$0")
-SCRIPT_BASENAME="${SCRIPT_NAME%.*}"
-SCRIPT_DEFAULT_APP_NAME="${REBECCA_NODE_DEFAULT_APP_NAME:-$SCRIPT_BASENAME}"
-case "$SCRIPT_DEFAULT_APP_NAME" in
-    rebecca-node-binary|@|bash|sh)
-        SCRIPT_DEFAULT_APP_NAME="rebecca-node"
-    ;;
-esac
+SCRIPT_DEFAULT_APP_NAME="${REBECCA_NODE_DEFAULT_APP_NAME:-rebecca-node}"
 
 declare -a DISCOVERED_NODE_PATHS=()
 declare -a DISCOVERED_NODE_NAMES=()
@@ -2559,7 +2552,13 @@ dispatch_command() {
             ;;
     esac
     case "$cmd" in
-        install) install_command ;;
+        install)
+            if [ ! -t 0 ] && [ -r /dev/tty ]; then
+                install_command </dev/tty
+            else
+                install_command
+            fi
+        ;;
         update) update_command ;;
         uninstall) uninstall_command ;;
         up) up_command ;;

@@ -51,6 +51,7 @@ import {
 	WrenchScrewdriverIcon,
 } from "@heroicons/react/24/outline";
 import { CompactChips, CompactTextWithCopy } from "components/CompactPopover";
+import { ConfirmDialog } from "components/dialogs/ConfirmDialog";
 import {
 	DataTable,
 	ResourceListCard,
@@ -668,6 +669,10 @@ export const CoreSettingsPage: FC = () => {
 	const [fakeDns, setFakeDns] = useState<any[]>([]);
 	const [outboundsTraffic, setOutboundsTraffic] = useState<any[]>([]);
 	const [outboundIds, setOutboundIds] = useState<string[]>([]);
+	const [outboundReset, setOutboundReset] = useState<{
+		index: number;
+		scope: "target" | "all";
+	} | null>(null);
 	const [outboundTestStates, setOutboundTestStates] = useState<
 		Record<number, OutboundTestState>
 	>({});
@@ -1114,6 +1119,12 @@ export const CoreSettingsPage: FC = () => {
 		if (response?.success) {
 			await fetchOutboundsTraffic();
 		}
+	};
+
+	const confirmOutboundTrafficReset = async () => {
+		if (!outboundReset) return;
+		await _resetOutboundTraffic(outboundReset.index, outboundReset.scope);
+		setOutboundReset(null);
 	};
 
 	const testOutbound = async (index: number) => {
@@ -2220,7 +2231,7 @@ export const CoreSettingsPage: FC = () => {
 								.toLowerCase()
 								.trim();
 							if (
-								!["openvpn", "wireguard", "l2tp", "pptp"].includes(protocol)
+								!["openvpn", "wireguard", "l2tp", "pptp", "ikev2", "anyconnect"].includes(protocol)
 							) {
 								return true;
 							}
@@ -2335,6 +2346,19 @@ export const CoreSettingsPage: FC = () => {
 				})
 				.map((outbound: any) => String(outbound.tag)),
 		[canonicalOutbounds, editingReverseRow?.connectionTag],
+	);
+	const vlessOutboundDetails = useMemo(
+		() =>
+			Object.fromEntries(
+				canonicalOutbounds.map((outbound: any) => {
+					const account = readVlessOutboundAccount(outbound);
+					return [
+						String(outbound?.tag ?? ""),
+						{ credentialId: account.id, flow: account.flow },
+					];
+				}),
+			),
+		[canonicalOutbounds],
 	);
 
 	const existingReverseTags = useMemo(
@@ -3091,7 +3115,8 @@ export const CoreSettingsPage: FC = () => {
 			id: "reset",
 			label: t("pages.inbounds.resetTraffic", "Reset traffic"),
 			icon: <ReloadIconStyled />,
-			onClick: () => _resetOutboundTraffic(row.originalIndex, "target"),
+			onClick: () =>
+				setOutboundReset({ index: row.originalIndex, scope: "target" }),
 		},
 		{
 			id: "delete",
@@ -4228,7 +4253,9 @@ export const CoreSettingsPage: FC = () => {
 										<Button
 											size="xs"
 											variant="ghost"
-											onClick={() => _resetOutboundTraffic(-1, "target")}
+											onClick={() =>
+												setOutboundReset({ index: -1, scope: "target" })
+											}
 										>
 											{t("pages.xray.outbound.resetTarget", "Reset target")}
 										</Button>
@@ -4236,7 +4263,9 @@ export const CoreSettingsPage: FC = () => {
 											size="xs"
 											variant="ghost"
 											colorScheme="red"
-											onClick={() => _resetOutboundTraffic(-1, "all")}
+											onClick={() =>
+												setOutboundReset({ index: -1, scope: "all" })
+											}
 										>
 											{t("pages.xray.outbound.resetAll", "Reset all")}
 										</Button>
@@ -4872,6 +4901,7 @@ export const CoreSettingsPage: FC = () => {
 				outboundTags={availableOutboundTags}
 				vlessInboundTags={vlessInboundTags}
 				vlessOutboundTags={vlessOutboundTags}
+				vlessOutboundDetails={vlessOutboundDetails}
 				existingTags={existingReverseTags}
 				reverseCount={reverseData.length}
 				onSubmit={handleReverseSubmit}
@@ -4952,6 +4982,25 @@ export const CoreSettingsPage: FC = () => {
 				currentFakeDnsData={
 					editingFakeDnsIndex !== null ? fakeDns[editingFakeDnsIndex] : null
 				}
+			/>
+			<ConfirmDialog
+				isOpen={Boolean(outboundReset)}
+				onClose={() => setOutboundReset(null)}
+				onConfirm={confirmOutboundTrafficReset}
+				title={t("pages.xray.outbound.resetTraffic", "Reset traffic")}
+				description={
+					outboundReset?.index === -1
+						? t(
+								"pages.xray.outbound.resetTrafficScopeConfirm",
+								"Reset traffic for the selected scope?",
+							)
+						: t(
+								"pages.xray.outbound.resetTrafficConfirm",
+								"Reset traffic for {{tag}}?",
+								{ tag: outboundData[outboundReset?.index ?? -1]?.tag ?? "" },
+							)
+				}
+				confirmLabel={t("reset", "Reset")}
 			/>
 		</VStack>
 	);

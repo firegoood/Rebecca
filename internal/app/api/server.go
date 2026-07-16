@@ -59,6 +59,7 @@ type Server struct {
 	userOpsKickMu      sync.Mutex
 	userOpsKicking     bool
 	userOpsKickUserIDs map[int64]struct{}
+	sessionAdmissionMu sync.Mutex
 }
 
 func New(cfg Config) (*Server, error) {
@@ -146,6 +147,10 @@ func (s *Server) applyRuntimeSettings(settings settingsapp.RuntimeSettings) {
 
 func (s *Server) RuntimeSettings(ctx context.Context) (settingsapp.RuntimeSettings, error) {
 	return s.settingsRepo.RuntimeSettings(ctx)
+}
+
+func (s *Server) SubscriptionSettings(ctx context.Context) (settingsapp.SubscriptionSettings, error) {
+	return s.settingsRepo.SubscriptionSettings(ctx)
 }
 
 func (s *Server) StartBackground(ctx context.Context) {
