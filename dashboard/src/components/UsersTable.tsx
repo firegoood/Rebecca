@@ -34,6 +34,8 @@ import {
 	PencilIcon,
 	PlusCircleIcon,
 	QrCodeIcon,
+	ServerStackIcon,
+	SignalIcon,
 	TrashIcon,
 } from "@heroicons/react/24/outline";
 import { LockClosedIcon } from "@heroicons/react/24/solid";
@@ -41,6 +43,7 @@ import type { SortingState } from "@tanstack/react-table";
 import { ReactComponent as AddFileIcon } from "assets/add_file.svg";
 import { resetStrategy } from "constants/UserSettings";
 import { useDashboard } from "contexts/DashboardContext";
+import dayjs from "dayjs";
 import useGetUser from "hooks/useGetUser";
 import {
 	type FC,
@@ -66,6 +69,7 @@ import { generateUserLinks } from "utils/userLinks";
 import { AppDialog } from "./dialogs/AppDialog";
 import { ConfirmDialog, DeleteConfirmDialog } from "./dialogs/ConfirmDialog";
 import { OnlineStatus } from "./OnlineStatus";
+import { OperatorIdentity } from "./OperatorIdentity";
 import { StatusBadge } from "./StatusBadge";
 import {
 	DataTable,
@@ -133,17 +137,97 @@ const IPsIcon = chakra(GlobeAltIcon, iconProps);
 type UserIPRecord = {
 	node_id: number;
 	node_name?: string;
+	node_names?: string[];
 	protocol: string;
+	protocols?: string[];
 	inbound_tag?: string;
+	inbound_tags?: string[];
 	session_id?: string;
 	ip?: string;
 	assigned_ip?: string;
+	assigned_ips?: string[];
+	connections?: number;
+	operator_short_name?: string;
+	operator_owner?: string;
 	last_seen_at?: string;
 };
 
 type UserIPsResponse = {
 	username: string;
 	ips: UserIPRecord[];
+};
+
+const uniqueIPValues = (values: Array<string | undefined>) =>
+	Array.from(
+		new Set(values.map((value) => value?.trim()).filter(Boolean) as string[]),
+	).sort();
+
+const deduplicateUserIPRecords = (records: UserIPRecord[]) => {
+	const byIP = new Map<string, UserIPRecord>();
+	for (const record of records) {
+		const ip = (record.ip || record.assigned_ip || "").trim();
+		const key =
+			ip || `${record.node_id}:${record.protocol}:${record.session_id || ""}`;
+		const current = byIP.get(key);
+		if (!current) {
+			byIP.set(key, {
+				...record,
+				ip,
+				connections: Math.max(record.connections || 1, 1),
+				node_names: uniqueIPValues([
+					...(record.node_names || []),
+					record.node_name,
+				]),
+				protocols: uniqueIPValues([
+					...(record.protocols || []),
+					record.protocol,
+				]),
+				inbound_tags: uniqueIPValues([
+					...(record.inbound_tags || []),
+					record.inbound_tag,
+				]),
+				assigned_ips: uniqueIPValues([
+					...(record.assigned_ips || []),
+					record.assigned_ip,
+				]),
+			});
+			continue;
+		}
+		current.connections =
+			(current.connections || 1) + Math.max(record.connections || 1, 1);
+		current.node_names = uniqueIPValues([
+			...(current.node_names || []),
+			...(record.node_names || []),
+			record.node_name,
+		]);
+		current.protocols = uniqueIPValues([
+			...(current.protocols || []),
+			...(record.protocols || []),
+			record.protocol,
+		]);
+		current.inbound_tags = uniqueIPValues([
+			...(current.inbound_tags || []),
+			...(record.inbound_tags || []),
+			record.inbound_tag,
+		]);
+		current.assigned_ips = uniqueIPValues([
+			...(current.assigned_ips || []),
+			...(record.assigned_ips || []),
+			record.assigned_ip,
+		]);
+		if ((record.last_seen_at || "") > (current.last_seen_at || "")) {
+			current.last_seen_at = record.last_seen_at;
+		}
+		if (!current.operator_short_name) {
+			current.operator_short_name = record.operator_short_name;
+		}
+		if (!current.operator_owner) {
+			current.operator_owner = record.operator_owner;
+		}
+	}
+	return Array.from(byIP.values()).sort((left, right) =>
+		(right.last_seen_at || "").localeCompare(left.last_seen_at || ""),
+	);
 };
 
 const TRAFFIC_AMOUNTS = [1, 2, 3, 5, 10] as const;
@@ -155,14 +239,7 @@ const TrafficSubmenu: FC<{
 	onClose: () => void;
 	onSelect: (gigabytes: number) => void;
 	getOptionLabel: (gigabytes: number) => string;
-}> = ({
-	label,
-	isRTL,
-	activeAction,
-	onClose,
-	onSelect,
-	getOptionLabel,
-}) => {
+}> = ({ label, isRTL, activeAction, onClose, onSelect, getOptionLabel }) => {
 	const [isOpen, setIsOpen] = useState(false);
 	const closeTimer = useRef<number | null>(null);
 
@@ -634,14 +711,25 @@ export const UsersTable: FC<UsersTableProps> = ({
 		}
 		return records
 			.map((record) => {
-				const node = record.node_name || `node-${record.node_id}`;
+				const nodes = uniqueIPValues([
+					...(record.node_names || []),
+					record.node_name || `node-${record.node_id}`,
+				]);
+				const protocols = uniqueIPValues([
+					...(record.protocols || []),
+					record.protocol,
+				]);
+				const inbounds = uniqueIPValues([
+					...(record.inbound_tags || []),
+					record.inbound_tag,
+				]);
 				const ip = record.ip || record.assigned_ip || "-";
-				const assigned =
-					record.assigned_ip && record.assigned_ip !== ip
-						? ` assigned=${record.assigned_ip}`
-						: "";
-				const inbound = record.inbound_tag ? ` ${record.inbound_tag}` : "";
-				return `${record.protocol}${inbound} @ ${node}: ${ip}${assigned}`;
+				const assigned = uniqueIPValues([
+					...(record.assigned_ips || []),
+					record.assigned_ip,
+				]).filter((value) => value !== ip);
+				const operator = record.operator_short_name || record.operator_owner;
+				return `${protocols.join(", ")}${inbounds.length ? ` (${inbounds.join(", ")})` : ""} @ ${nodes.join(", ")}: ${ip}${assigned.length ? ` assigned=${assigned.join(",")}` : ""}${operator ? ` operator=${operator}` : ""}`;
 			})
 			.join("\n");
 	};
@@ -656,7 +744,10 @@ export const UsersTable: FC<UsersTableProps> = ({
 			);
 			setIPDialog((current) =>
 				current?.username === user.username
-					? { username: user.username, records: response.ips || [] }
+					? {
+							username: user.username,
+							records: deduplicateUserIPRecords(response.ips || []),
+						}
 					: current,
 			);
 		} catch (error: any) {
@@ -1148,9 +1239,7 @@ export const UsersTable: FC<UsersTableProps> = ({
 						isRTL={isRTL}
 						activeAction={contextAction}
 						onClose={onClose}
-						onSelect={(gigabytes) =>
-							handleAdjustTraffic(user, gigabytes)
-						}
+						onSelect={(gigabytes) => handleAdjustTraffic(user, gigabytes)}
 						getOptionLabel={(gigabytes) =>
 							t("usersTable.addGb", "Add {{count}} GB", {
 								count: gigabytes,
@@ -1585,62 +1674,128 @@ export const UsersTable: FC<UsersTableProps> = ({
 							</Text>
 						</Box>
 					) : (
-						<Stack
-							spacing={0}
-							borderWidth="1px"
-							borderColor="panel.border"
-							borderRadius="md"
-							overflow="hidden"
-						>
+						<Stack spacing={3}>
 							{ipDialog.records.map((record, index) => {
-								const node = record.node_name || `node-${record.node_id}`;
+								const nodes = uniqueIPValues([
+									...(record.node_names || []),
+									record.node_name || `node-${record.node_id}`,
+								]);
+								const protocols = uniqueIPValues([
+									...(record.protocols || []),
+									record.protocol,
+								]);
+								const inbounds = uniqueIPValues([
+									...(record.inbound_tags || []),
+									record.inbound_tag,
+								]);
 								const ip = record.ip || record.assigned_ip || "-";
-								const metadata = [record.protocol, record.inbound_tag, node]
+								const metadata = [
+									protocols.join(", "),
+									inbounds.join(", "),
+									nodes.join(", "),
+								]
 									.filter(Boolean)
 									.join(" · ");
-								const assignedIP =
-									record.assigned_ip && record.assigned_ip !== ip
-										? record.assigned_ip
-										: null;
+								const assignedIPs = uniqueIPValues([
+									...(record.assigned_ips || []),
+									record.assigned_ip,
+								]).filter((value) => value !== ip);
+								const connections = Math.max(record.connections || 1, 1);
 
 								return (
 									<Box
-										key={record.session_id || `${metadata}-${ip}-${index}`}
-										px={3}
-										py={2.5}
-										borderBottomWidth={
-											index === ipDialog.records.length - 1 ? 0 : "1px"
-										}
+										as="article"
+										key={ip === "-" ? `${metadata}-${index}` : ip}
+										p={3}
+										borderWidth="1px"
 										borderColor="panel.border"
+										borderRadius="6px"
 									>
-										<Text
-											dir="ltr"
-											fontFamily="mono"
-											fontWeight="700"
-											fontSize="sm"
-											overflowWrap="anywhere"
+										<Flex
+											justify="space-between"
+											direction={{ base: "column", sm: "row" }}
+											align={{ base: "stretch", sm: "flex-start" }}
+											gap={3}
 										>
-											{ip}
-										</Text>
-										<Text
-											mt={0.5}
-											dir="ltr"
-											fontSize="xs"
+											<OperatorIdentity
+												shortName={record.operator_short_name}
+												owner={record.operator_owner}
+											/>
+											<Box minW={0} textAlign={{ base: "start", sm: "end" }}>
+												<Text
+													dir="ltr"
+													fontFamily="mono"
+													fontWeight="700"
+													fontSize="sm"
+													overflowWrap="anywhere"
+												>
+													{ip}
+												</Text>
+												<HStack
+													mt={0.5}
+													spacing={1}
+													justify={{ base: "flex-start", sm: "flex-end" }}
+													color="panel.textSecondary"
+													fontSize="xs"
+												>
+													<SignalIcon width={14} aria-hidden="true" />
+													<Text>
+														{t("usersTable.ipConnections", {
+															defaultValue:
+																"{{count}} connections from this IP",
+															count: connections,
+														})}
+													</Text>
+												</HStack>
+											</Box>
+										</Flex>
+
+										<HStack
+											mt={3}
+											spacing={3}
+											flexWrap="wrap"
 											color="panel.textMuted"
-											overflowWrap="anywhere"
+											fontSize="xs"
 										>
-											{metadata}
-										</Text>
-										{assignedIP && (
+											{protocols.length > 0 && (
+												<HStack spacing={1}>
+													<GlobeAltIcon width={14} aria-hidden="true" />
+													<Text>{protocols.join(", ")}</Text>
+												</HStack>
+											)}
+											{inbounds.length > 0 && (
+												<HStack spacing={1}>
+													<LinkIcon width={14} aria-hidden="true" />
+													<Text>{inbounds.join(", ")}</Text>
+												</HStack>
+											)}
+											{nodes.length > 0 && (
+												<HStack spacing={1}>
+													<ServerStackIcon width={14} aria-hidden="true" />
+													<Text>{nodes.join(", ")}</Text>
+												</HStack>
+											)}
+											{record.last_seen_at && (
+												<HStack spacing={1}>
+													<ClockIcon width={14} aria-hidden="true" />
+													<Text dir="ltr">
+														{dayjs(record.last_seen_at).format(
+															"YYYY-MM-DD HH:mm",
+														)}
+													</Text>
+												</HStack>
+											)}
+										</HStack>
+										{assignedIPs.length > 0 && (
 											<Text
 												mt={1}
 												fontSize="xs"
 												color="panel.textSecondary"
 												overflowWrap="anywhere"
 											>
-												{t("usersTable.assignedIp", "Assigned IP")}: {" "}
+												{t("usersTable.assignedIp", "Assigned IP")}:{" "}
 												<chakra.span dir="ltr" display="inline-block">
-													{assignedIP}
+													{assignedIPs.join(", ")}
 												</chakra.span>
 											</Text>
 										)}
