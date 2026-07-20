@@ -88,6 +88,10 @@ import { NordVPNModal } from "../components/NordVPNModal";
 import { OutboundModal } from "../components/OutboundModal";
 import { OutboundSubscriptionsModal } from "../components/OutboundSubscriptionsModal";
 import {
+	type TorProxyFormValues,
+	TorProxyModal,
+} from "../components/TorProxyModal";
+import {
 	type ReverseFormValues,
 	ReverseModal,
 	type ReverseType,
@@ -239,6 +243,14 @@ type OutboundTestResult = {
 type OutboundTestState = {
 	testing: boolean;
 	result: OutboundTestResult | null;
+};
+type RouteTestResult = {
+	matched: boolean;
+	outboundTag?: string;
+	outbound_tag?: string;
+	groupTags?: string[];
+	group_tags?: string[];
+	error?: string;
 };
 type BalancerConfig = {
 	tag: string;
@@ -635,6 +647,11 @@ export const CoreSettingsPage: FC = () => {
 		onOpen: onOutboundSubsOpen,
 		onClose: onOutboundSubsClose,
 	} = useDisclosure();
+	const {
+		isOpen: isTorProxyOpen,
+		onOpen: onTorProxyOpen,
+		onClose: onTorProxyClose,
+	} = useDisclosure();
 
 	const form = useForm({
 		defaultValues: {
@@ -662,8 +679,19 @@ export const CoreSettingsPage: FC = () => {
 	const [outboundTestType, setOutboundTestType] =
 		useState<OutboundTestType>("latency");
 	const [testingAllOutbounds, setTestingAllOutbounds] = useState(false);
+	const [isApplyingTorProxy, setIsApplyingTorProxy] = useState(false);
 	const [routingRuleData, setRoutingRuleData] = useState<any[]>([]);
 	const [routingRuleSearch, setRoutingRuleSearch] = useState("");
+	const [routeTestDestination, setRouteTestDestination] = useState("");
+	const [routeTestPort, setRouteTestPort] = useState("443");
+	const [routeTestNetwork, setRouteTestNetwork] = useState("tcp");
+	const [routeTestInbound, setRouteTestInbound] = useState("");
+	const [routeTestProtocol, setRouteTestProtocol] = useState("");
+	const [routeTestEmail, setRouteTestEmail] = useState("");
+	const [routeTestResult, setRouteTestResult] = useState<RouteTestResult | null>(
+		null,
+	);
+	const [isRouteTesting, setIsRouteTesting] = useState(false);
 	const [balancersData, setBalancersData] = useState<BalancerRow[]>([]);
 	const [dnsServers, setDnsServers] = useState<any[]>([]);
 	const [fakeDns, setFakeDns] = useState<any[]>([]);
@@ -724,6 +752,14 @@ export const CoreSettingsPage: FC = () => {
 		tcp: t("pages.xray.outbound.testTypeTcp", "TCP"),
 		icmp: t("pages.xray.outbound.testTypeIcmp", "ICMP"),
 	};
+	const routeInboundTags = useMemo(() => {
+		const inbounds = Array.isArray(watchedConfig?.inbounds)
+			? watchedConfig.inbounds
+			: [];
+		return inbounds
+			.map((inbound: any) => String(inbound?.tag ?? "").trim())
+			.filter(Boolean);
+	}, [watchedConfig]);
 	const outboundTestResultLabel = useCallback(
 		(result: OutboundTestResult) => {
 			const delayLabel =
@@ -1288,6 +1324,63 @@ export const CoreSettingsPage: FC = () => {
 	const addOutbound = () => {
 		setEditingOutboundIndex(null);
 		onOutboundOpen();
+	};
+
+	const addTorOutbound = async (values: TorProxyFormValues) => {
+		setIsApplyingTorProxy(true);
+		try {
+			const response = await apiFetch<{
+				success: boolean;
+				obj?: { outbound?: any; message?: string };
+				msg?: string;
+			}>("/panel/xray/tor/setup", {
+				method: "POST",
+				body: {
+					target_id: selectedTarget,
+					country: values.country.trim().toLowerCase(),
+					port: values.port,
+					tag: values.tag.trim(),
+					strict: values.strict,
+				},
+			});
+			const outbound = response?.obj?.outbound;
+			if (!response?.success || !outbound) {
+				throw new Error(response?.msg || t("pages.xray.tor.failed", "Unable to setup Tor proxy"));
+			}
+			const outbounds = getOutbounds();
+			const existingIndex = outbounds.findIndex(
+				(item: any) => String(item?.tag ?? "") === String(outbound.tag ?? ""),
+			);
+			if (existingIndex >= 0) {
+				outbounds[existingIndex] = outbound;
+			} else {
+				outbounds.push(outbound);
+			}
+			commitOutbounds(outbounds);
+			onTorProxyClose();
+			toast({
+				title: response.obj?.message || t("pages.xray.tor.added", "Tor outbound added"),
+				status: "success",
+				isClosable: true,
+				position: "top",
+				duration: 4000,
+			});
+		} catch (error: any) {
+			const detail =
+				error?.response?._data?.detail ??
+				error?.data?.detail ??
+				error?.message ??
+				t("pages.xray.tor.failed", "Unable to setup Tor proxy");
+			toast({
+				title: typeof detail === "string" ? detail : JSON.stringify(detail),
+				status: "error",
+				isClosable: true,
+				position: "top",
+				duration: 5000,
+			});
+		} finally {
+			setIsApplyingTorProxy(false);
+		}
 	};
 
 	const editOutbound = (index: number) => {
@@ -3479,6 +3572,97 @@ export const CoreSettingsPage: FC = () => {
 		if (readHashTab() !== key) window.location.hash = key;
 	};
 
+	const runRouteTest = async () => {
+		const destination = routeTestDestination.trim();
+		if (!destination) {
+			toast({
+				title: t("pages.xray.routeTester.destRequired", "Destination is required"),
+				status: "warning",
+				isClosable: true,
+				position: "top",
+				duration: 3000,
+			});
+			return;
+		}
+		if (isMasterTarget) {
+			toast({
+				title: t(
+					"pages.xray.routeTester.nodeTargetRequired",
+					"Change the target to a node before testing this route.",
+				),
+				status: "warning",
+				isClosable: true,
+				position: "top",
+				duration: 4000,
+			});
+			return;
+		}
+		const port = Number.parseInt(routeTestPort || "0", 10);
+		if (!Number.isFinite(port) || port < 0 || port > 65535) {
+			toast({
+				title: t("pages.xray.routeTester.portInvalid", "Port must be between 0 and 65535"),
+				status: "warning",
+				isClosable: true,
+				position: "top",
+				duration: 3000,
+			});
+			return;
+		}
+
+		const isIP =
+			/^(\d{1,3}\.){3}\d{1,3}$/.test(destination) ||
+			destination.includes(":");
+		setIsRouteTesting(true);
+		setRouteTestResult(null);
+		try {
+			const response = await apiFetch<{
+				success: boolean;
+				obj?: RouteTestResult;
+				msg?: string;
+			}>("/panel/xray/routeTest", {
+				method: "POST",
+				body: {
+					target_id: selectedTarget,
+					domain: isIP ? "" : destination,
+					ip: isIP ? destination : "",
+					port,
+					network: routeTestNetwork,
+					inboundTag: routeTestInbound,
+					protocol: routeTestProtocol,
+					email: routeTestEmail,
+				},
+			});
+			if (response?.success && response.obj) {
+				setRouteTestResult(response.obj);
+				return;
+			}
+			throw new Error(
+				response?.msg ||
+					t("pages.xray.routeTester.failed", "Unable to test route"),
+			);
+		} catch (error: any) {
+			const detail =
+				error?.response?._data?.detail ??
+				error?.data?.detail ??
+				error?.message ??
+				t("pages.xray.routeTester.failed", "Unable to test route");
+			const detailText =
+				typeof detail === "string"
+					? detail
+					: JSON.stringify(detail ?? "Unknown error");
+			setRouteTestResult({ matched: false, error: detailText });
+			toast({
+				title: `${t("pages.xray.routeTester.failed", "Unable to test route")}: ${detailText}`,
+				status: "error",
+				isClosable: true,
+				position: "top",
+				duration: 4000,
+			});
+		} finally {
+			setIsRouteTesting(false);
+		}
+	};
+
 	return (
 		<VStack spacing={4} align="stretch">
 			<Box
@@ -4097,6 +4281,181 @@ export const CoreSettingsPage: FC = () => {
 				<Box p={0} mt={3} display={activeTab === 1 ? "block" : "none"}>
 						<VStack spacing={4} align="stretch">
 							<ResourceListCard
+								title={t("pages.xray.routeTester.title", "Test route")}
+								summaryItems={[
+									{
+										label: t("pages.xray.routeTester.target", "Target"),
+										value: selectedTargetInfo?.name || selectedTarget || "master",
+										colorScheme: isMasterTarget ? "orange" : "green",
+									},
+								]}
+								actions={
+									<Button
+										leftIcon={isRouteTesting ? <Spinner size="xs" /> : <BoltIconStyled />}
+										{...compactActionButtonProps}
+										isDisabled={isRouteTesting || isMasterTarget}
+										onClick={runRouteTest}
+									>
+										{t("pages.xray.routeTester.test", "Test")}
+									</Button>
+								}
+							>
+								<VStack align="stretch" spacing={3}>
+									<Text color="panel.textMuted" fontSize="xs">
+										{isMasterTarget
+											? t(
+													"pages.xray.routeTester.nodeTargetRequired",
+													"Change the target to a node before testing this route.",
+												)
+											: t(
+													"pages.xray.routeTester.desc",
+													"Ask the selected node which outbound Xray would choose for this synthetic connection.",
+												)}
+									</Text>
+									<Stack
+										direction={{ base: "column", lg: "row" }}
+										spacing={2}
+										align={{ base: "stretch", lg: "end" }}
+									>
+										<FormControl maxW={{ base: "full", lg: "280px" }}>
+											<FormLabel fontSize="xs">
+												{t("pages.xray.routeTester.destination", "Destination")}
+											</FormLabel>
+											<Input
+												size="sm"
+												value={routeTestDestination}
+												placeholder="example.com"
+												onChange={(e) => setRouteTestDestination(e.target.value)}
+												onKeyDown={(e) => {
+													if (e.key === "Enter") void runRouteTest();
+												}}
+											/>
+										</FormControl>
+										<FormControl maxW={{ base: "full", lg: "100px" }}>
+											<FormLabel fontSize="xs">
+												{t("pages.xray.routeTester.port", "Port")}
+											</FormLabel>
+											<Input
+												size="sm"
+												value={routeTestPort}
+												inputMode="numeric"
+												onChange={(e) => setRouteTestPort(e.target.value)}
+											/>
+										</FormControl>
+										<FormControl maxW={{ base: "full", lg: "120px" }}>
+											<FormLabel fontSize="xs">
+												{t("pages.xray.routeTester.network", "Network")}
+											</FormLabel>
+											<Select
+												size="sm"
+												value={routeTestNetwork}
+												onChange={(e) => setRouteTestNetwork(e.target.value)}
+											>
+												<option value="tcp">TCP</option>
+												<option value="udp">UDP</option>
+											</Select>
+										</FormControl>
+										<FormControl maxW={{ base: "full", lg: "180px" }}>
+											<FormLabel fontSize="xs">
+												{t("pages.xray.routeTester.inbound", "Inbound")}
+											</FormLabel>
+											<Select
+												size="sm"
+												value={routeTestInbound}
+												onChange={(e) => setRouteTestInbound(e.target.value)}
+											>
+												<option value="">
+													{t("pages.xray.routeTester.anyInbound", "Any inbound")}
+												</option>
+												{routeInboundTags.map((tag: string) => (
+													<option key={tag} value={tag}>
+														{tag}
+													</option>
+												))}
+											</Select>
+										</FormControl>
+										<FormControl maxW={{ base: "full", lg: "160px" }}>
+											<FormLabel fontSize="xs">
+												{t("pages.xray.routeTester.protocol", "Protocol")}
+											</FormLabel>
+											<Select
+												size="sm"
+												value={routeTestProtocol}
+												onChange={(e) => setRouteTestProtocol(e.target.value)}
+											>
+												<option value="">
+													{t("pages.xray.routeTester.anyProtocol", "Any protocol")}
+												</option>
+												{["http", "tls", "quic", "bittorrent"].map((protocol) => (
+													<option key={protocol} value={protocol}>
+														{protocol}
+													</option>
+												))}
+											</Select>
+										</FormControl>
+										<FormControl maxW={{ base: "full", lg: "180px" }}>
+											<FormLabel fontSize="xs">
+												{t("pages.xray.routeTester.email", "User email")}
+											</FormLabel>
+											<Input
+												size="sm"
+												value={routeTestEmail}
+												placeholder={t("optional", "Optional")}
+												onChange={(e) => setRouteTestEmail(e.target.value)}
+											/>
+										</FormControl>
+									</Stack>
+									{routeTestResult && (
+										<Box
+											borderWidth="1px"
+											borderColor={routeTestResult.error ? "red.300" : "panel.border"}
+											borderRadius="md"
+											px={3}
+											py={2}
+											bg="panel.card"
+										>
+											<HStack spacing={2} flexWrap="wrap">
+												{routeTestResult.error ? (
+													<Text color="red.300" fontSize="sm">
+														{routeTestResult.error}
+													</Text>
+												) : routeTestResult.matched ? (
+													<>
+														<Text fontSize="sm">
+															{t(
+																"pages.xray.routeTester.matchedOutbound",
+																"Matched outbound",
+															)}
+														</Text>
+														<Tag size="sm" colorScheme="blue">
+															{routeTestResult.outboundTag ||
+																routeTestResult.outbound_tag ||
+																"-"}
+														</Tag>
+														{(
+															routeTestResult.groupTags ||
+															routeTestResult.group_tags ||
+															[]
+														).map((tag) => (
+															<Tag key={tag} size="sm" colorScheme="orange">
+																{tag}
+															</Tag>
+														))}
+													</>
+												) : (
+													<Text fontSize="sm" color="panel.textMuted">
+														{t(
+															"pages.xray.routeTester.defaultOutbound",
+															"No routing rule matched; Xray will use the default outbound.",
+														)}
+													</Text>
+												)}
+											</HStack>
+										</Box>
+									)}
+								</VStack>
+							</ResourceListCard>
+							<ResourceListCard
 								title={t("pages.xray.Routings")}
 								summaryItems={[
 									{
@@ -4234,6 +4593,15 @@ export const CoreSettingsPage: FC = () => {
 											onClick={onNordOpen}
 										>
 											NordVPN
+										</Button>
+										<Button
+											leftIcon={<BoltIconStyled />}
+											size="xs"
+											variant="ghost"
+											isLoading={isApplyingTorProxy}
+											onClick={onTorProxyOpen}
+										>
+											{t("pages.xray.tor.setup", "Tor")}
 										</Button>
 									</HStack>
 								}
@@ -4924,6 +5292,13 @@ export const CoreSettingsPage: FC = () => {
 					await fetchActiveSubscriptionOutbounds();
 					await fetchOutboundsTraffic();
 				}}
+			/>
+			<TorProxyModal
+				isOpen={isTorProxyOpen}
+				isLoading={isApplyingTorProxy}
+				isMasterTarget={isMasterTarget}
+				onClose={onTorProxyClose}
+				onSubmit={addTorOutbound}
 			/>
 			<BalancerModal
 				isOpen={isBalancerOpen}

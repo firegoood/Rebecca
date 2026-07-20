@@ -91,6 +91,101 @@ func TestOutboundTestRejectsMasterTarget(t *testing.T) {
 	}
 }
 
+func TestRouteTestRejectsMasterTarget(t *testing.T) {
+	server := &Server{}
+	payload := []byte(`{
+		"target_id": "master",
+		"domain": "example.com",
+		"port": 443,
+		"network": "tcp"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/panel/xray/routeTest", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	server.handleRouteTest(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Change the target to a node") {
+		t.Fatalf("unexpected body=%s", rec.Body.String())
+	}
+}
+
+func TestRouteTestRejectsMissingDestination(t *testing.T) {
+	server := &Server{}
+	payload := []byte(`{
+		"target_id": "node:7",
+		"port": 443,
+		"network": "tcp"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/panel/xray/routeTest", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	server.handleRouteTest(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "domain or ip is required") {
+		t.Fatalf("unexpected body=%s", rec.Body.String())
+	}
+}
+
+func TestTorProxySetupRejectsInvalidPort(t *testing.T) {
+	server := &Server{}
+	payload := []byte(`{
+		"target_id": "node:7",
+		"port": 80,
+		"country": "de"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/panel/xray/tor/setup", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	server.handleTorProxySetup(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "port must be") {
+		t.Fatalf("unexpected body=%s", rec.Body.String())
+	}
+}
+
+func TestTorProxySetupReturnsBeforeNodeInstallation(t *testing.T) {
+	server, _ := testAdminServer(t)
+	payload := []byte(`{
+		"target_id": "node:999",
+		"port": 9050,
+		"country": "de",
+		"tag": "tor-de"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/panel/xray/tor/setup", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	server.handleTorProxySetup(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Success bool `json:"success"`
+		Obj     struct {
+			Outbound map[string]any `json:"outbound"`
+		} `json:"obj"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Success || body.Obj.Outbound["tag"] != "tor-de" {
+		t.Fatalf("unexpected response: %#v", body)
+	}
+}
+
 func TestOutboundTestRejectsAddresslessTCPAndICMP(t *testing.T) {
 	server := &Server{}
 	for _, testType := range []string{"tcp", "icmp"} {
