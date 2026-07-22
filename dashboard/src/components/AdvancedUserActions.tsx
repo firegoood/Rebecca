@@ -10,8 +10,10 @@ import {
 	FormLabel,
 	HStack,
 	IconButton,
+	SimpleGrid,
 	Stack,
 	Text,
+	Textarea,
 	Tooltip,
 	useBreakpointValue,
 	useDisclosure,
@@ -59,6 +61,16 @@ type ServiceScopePayload = Partial<
 
 type OwnerSelection = "my_users" | "all_users" | `admin:${string}`;
 
+const parseTargetUsernames = (value: string) =>
+	Array.from(
+		new Set(
+			value
+				.split(/[\n,]+/)
+				.map((item) => item.trim())
+				.filter(Boolean),
+		),
+	).slice(0, 500);
+
 type AdvancedUserActionsProps = {
 	/** Render the trigger as a round icon button for tight toolbars. */
 	compact?: boolean;
@@ -94,9 +106,25 @@ const AdvancedUserActions = ({
 		useState<OwnerSelection>("my_users");
 	const [selectedServiceValue, setSelectedServiceValue] = useState("");
 	const [targetServiceValue, setTargetServiceValue] = useState("");
+	const [targetUsernames, setTargetUsernames] = useState("");
+	const [lastOnlineDays, setLastOnlineDays] = useState("");
+	const [statusAgeDays, setStatusAgeDays] = useState("");
+	const [createdBeforeDays, setCreatedBeforeDays] = useState("");
 	const [isChangingService, setIsChangingService] = useState(false);
-	const { adminOptions: adminList, fetchAdminOptions } = useAdminsStore();
-	const servicesStore = useServicesStore();
+	const adminList = useAdminsStore((store) => store.adminOptions);
+	const adminOptionsLoading = useAdminsStore(
+		(store) => store.adminOptionsLoading,
+	);
+	const fetchAdminOptions = useAdminsStore(
+		(store) => store.fetchAdminOptions,
+	);
+	const serviceOptions = useServicesStore((store) => store.serviceOptions);
+	const serviceOptionsLoading = useServicesStore(
+		(store) => store.isOptionsLoading,
+	);
+	const fetchServiceOptions = useServicesStore(
+		(store) => store.fetchServiceOptions,
+	);
 
 	const hasScopeSelect =
 		userData.role === AdminRole.Sudo || userData.role === AdminRole.FullAccess;
@@ -110,13 +138,24 @@ const AdvancedUserActions = ({
 	);
 
 	useEffect(() => {
-		if ((isOpen || embedded) && hasScopeSelect) {
-			fetchAdminOptions({ limit: 1000, offset: 0, sort: "username" });
+		if (!isOpen && !embedded) return;
+		if (hasScopeSelect && !adminList.length && !adminOptionsLoading) {
+			void fetchAdminOptions({ limit: 1000, offset: 0, sort: "username" });
 		}
-		if ((isOpen || embedded) && servicesStore.serviceOptions.length === 0) {
-			servicesStore.fetchServiceOptions({ limit: 1000, offset: 0 });
+		if (!serviceOptions.length && !serviceOptionsLoading) {
+			void fetchServiceOptions({ limit: 1000, offset: 0 });
 		}
-	}, [embedded, fetchAdminOptions, hasScopeSelect, isOpen, servicesStore]);
+	}, [
+		adminList.length,
+		adminOptionsLoading,
+		embedded,
+		fetchAdminOptions,
+		fetchServiceOptions,
+		hasScopeSelect,
+		isOpen,
+		serviceOptions.length,
+		serviceOptionsLoading,
+	]);
 
 	const resolveTargetAdminUsername = () => {
 		if (!hasScopeSelect) {
@@ -139,7 +178,7 @@ const AdvancedUserActions = ({
 		status: "success" | "error" | "warning",
 	) => {
 		toast({
-			title: t("filters.advancedActions.modalTitle", "Advanced actions"),
+			title: t("filters.advancedActions.modalTitle"),
 			description,
 			status,
 			isClosable: true,
@@ -157,7 +196,7 @@ const AdvancedUserActions = ({
 	const handleError = (message?: string) => {
 		showToast(
 			message ??
-				t("filters.advancedActions.error.general", "Unable to perform action"),
+				t("filters.advancedActions.error.general"),
 			"error",
 		);
 	};
@@ -169,28 +208,53 @@ const AdvancedUserActions = ({
 		return { service_id: Number(selectedServiceValue) };
 	};
 
+	const buildTargetingPayload = (
+		includeStatusAge = true,
+	): Partial<AdvancedUserActionPayload> | null => {
+		const parseDays = (value: string) => Math.floor(Number(value));
+		const payload: Partial<AdvancedUserActionPayload> = {};
+		const usernames = parseTargetUsernames(targetUsernames);
+		if (targetUsernames.trim() && !usernames.length) {
+			handleError(t("filters.advancedActions.error.invalidUsernames"));
+			return null;
+		}
+		if (usernames.length) payload.usernames = usernames;
+		for (const item of [
+			{ value: lastOnlineDays, key: "last_online_days" as const },
+			{ value: createdBeforeDays, key: "created_before_days" as const },
+			...(includeStatusAge
+				? [{ value: statusAgeDays, key: "status_age_days" as const }]
+				: []),
+		]) {
+			if (!item.value.trim()) continue;
+			const days = parseDays(item.value);
+			if (!Number.isFinite(days) || days <= 0) {
+				handleError(t("filters.advancedActions.error.invalidDays"));
+				return null;
+			}
+			payload[item.key] = days;
+		}
+		return payload;
+	};
+
 	const handleExpireAction = async (action: AdvancedUserActionType) => {
 		const days = Number(expireDays);
 		if (!Number.isFinite(days) || days <= 0) {
 			showToast(
-				t(
-					"filters.advancedActions.error.invalidDays",
-					"Enter a positive number of days",
-				),
+				t("filters.advancedActions.error.invalidDays"),
 				"warning",
 			);
 			return;
 		}
 		if (!selectedScopeStatuses.length) {
 			showToast(
-				t(
-					"filters.advancedActions.error.noScope",
-					"Select at least one status scope",
-				),
+				t("filters.advancedActions.error.noScope"),
 				"warning",
 			);
 			return;
 		}
+		const targeting = buildTargetingPayload();
+		if (!targeting) return;
 		const setLoading =
 			action === "extend_expire" ? setIsExtending : setIsReducing;
 		setLoading(true);
@@ -202,6 +266,7 @@ const AdvancedUserActions = ({
 				scope: selectedScopeStatuses,
 				admin_username: targetAdminUsername,
 				...buildServiceScopePayload(),
+				...targeting,
 			};
 			const result = await performBulkUserAction(payload);
 			showToast(
@@ -222,24 +287,20 @@ const AdvancedUserActions = ({
 		const value = Number(trafficGb);
 		if (!Number.isFinite(value) || value <= 0) {
 			showToast(
-				t(
-					"filters.advancedActions.error.invalidGigabytes",
-					"Enter a positive traffic value",
-				),
+				t("filters.advancedActions.error.invalidGigabytes"),
 				"warning",
 			);
 			return;
 		}
 		if (!selectedScopeStatuses.length) {
 			showToast(
-				t(
-					"filters.advancedActions.error.noScope",
-					"Select at least one status scope",
-				),
+				t("filters.advancedActions.error.noScope"),
 				"warning",
 			);
 			return;
 		}
+		const targeting = buildTargetingPayload();
+		if (!targeting) return;
 		const setLoading =
 			action === "increase_traffic"
 				? setIsIncreasingTraffic
@@ -253,6 +314,7 @@ const AdvancedUserActions = ({
 				scope: selectedScopeStatuses,
 				admin_username: targetAdminUsername,
 				...buildServiceScopePayload(),
+				...targeting,
 			};
 			const result = await performBulkUserAction(payload);
 			showToast(
@@ -274,24 +336,20 @@ const AdvancedUserActions = ({
 		const days = Number(cleanupDays);
 		if (!Number.isFinite(days) || days <= 0) {
 			showToast(
-				t(
-					"filters.advancedActions.error.invalidDays",
-					"Enter a positive number of days",
-				),
+				t("filters.advancedActions.error.invalidDays"),
 				"warning",
 			);
 			return;
 		}
 		if (!selectedStatuses.length) {
 			showToast(
-				t(
-					"filters.advancedActions.error.noStatuses",
-					"Select at least one status",
-				),
+				t("filters.advancedActions.error.noStatuses"),
 				"warning",
 			);
 			return;
 		}
+		const targeting = buildTargetingPayload(false);
+		if (!targeting) return;
 		setIsCleaning(true);
 		try {
 			const targetAdminUsername = resolveTargetAdminUsername();
@@ -299,8 +357,10 @@ const AdvancedUserActions = ({
 				action: "cleanup_status",
 				days: Math.floor(days),
 				statuses: selectedStatuses,
+				scope: selectedStatuses,
 				admin_username: targetAdminUsername,
 				...buildServiceScopePayload(),
+				...targeting,
 			};
 			const result = await performBulkUserAction(payload);
 			showToast(
@@ -320,24 +380,20 @@ const AdvancedUserActions = ({
 	const handleChangeService = async () => {
 		if (!targetServiceValue) {
 			showToast(
-				t(
-					"filters.advancedActions.error.targetServiceRequired",
-					"Select a target service first",
-				),
+				t("filters.advancedActions.error.targetServiceRequired"),
 				"warning",
 			);
 			return;
 		}
+		const targeting = buildTargetingPayload();
+		if (!targeting) return;
 		const resolvedTargetServiceId = Number(targetServiceValue);
 		if (
 			!Number.isFinite(resolvedTargetServiceId) ||
 			resolvedTargetServiceId <= 0
 		) {
 			showToast(
-				t(
-					"filters.advancedActions.error.targetServiceRequired",
-					"Select a target service first",
-				),
+				t("filters.advancedActions.error.targetServiceRequired"),
 				"warning",
 			);
 			return;
@@ -349,6 +405,10 @@ const AdvancedUserActions = ({
 				admin_username: resolveTargetAdminUsername(),
 				...buildServiceScopePayload(),
 				target_service_id: resolvedTargetServiceId,
+				...(targeting.status_age_days
+					? { scope: selectedScopeStatuses }
+					: {}),
+				...targeting,
 			};
 			const result = await performBulkUserAction(payload);
 			showToast(
@@ -391,17 +451,14 @@ const AdvancedUserActions = ({
 			<Alert status="warning" borderRadius="md">
 				<AlertIcon />
 				<Text>
-					{t(
-						"filters.advancedActions.modalDescription",
-						"These tools update every user and cannot be undone. Please double-check the values before confirming.",
-					)}
+					{t("filters.advancedActions.modalDescription")}
 				</Text>
 			</Alert>
 
 			{hasScopeSelect && (
 				<FormControl>
 					<FormLabel fontWeight="semibold">
-						{t("filters.advancedActions.scope.label", "Scope")}
+						{t("filters.advancedActions.scope.label")}
 					</FormLabel>
 					<Select
 						value={ownerSelection}
@@ -418,10 +475,10 @@ const AdvancedUserActions = ({
 						size="sm"
 					>
 						<option value="my_users">
-							{t("filters.advancedActions.scope.myUsers", "My users")}
+							{t("filters.advancedActions.scope.myUsers")}
 						</option>
 						<option value="all_users">
-							{t("filters.advancedActions.scope.allUsers", "All users")}
+							{t("filters.advancedActions.scope.allUsers")}
 						</option>
 						{adminList
 							.filter((record) => record.username !== userData.username)
@@ -435,10 +492,7 @@ const AdvancedUserActions = ({
 							))}
 					</Select>
 					<FormHelperText fontSize="sm">
-						{t(
-							"filters.advancedActions.scope.helper",
-							"Select an admin or all users for this action.",
-						)}
+						{t("filters.advancedActions.scope.helper")}
 					</FormHelperText>
 				</FormControl>
 			)}
@@ -447,7 +501,7 @@ const AdvancedUserActions = ({
 				<>
 					<FormControl>
 						<FormLabel fontWeight="semibold">
-							{t("filters.advancedActions.service.label", "Service scope")}
+							{t("filters.advancedActions.service.label")}
 						</FormLabel>
 						<Select
 							value={selectedServiceValue}
@@ -457,19 +511,16 @@ const AdvancedUserActions = ({
 							size="sm"
 						>
 							<option value="">
-								{t("filters.advancedActions.service.all", "All services")}
+								{t("filters.advancedActions.service.all")}
 							</option>
-							{servicesStore.serviceOptions.map((service) => (
+							{serviceOptions.map((service) => (
 								<option key={service.id} value={String(service.id)}>
 									{service.name}
 								</option>
 							))}
 						</Select>
 						<FormHelperText fontSize="sm">
-							{t(
-								"filters.advancedActions.service.helper",
-								"Apply these actions only to users of the selected service.",
-							)}
+							{t("filters.advancedActions.service.helper")}
 						</FormHelperText>
 					</FormControl>
 
@@ -477,29 +528,20 @@ const AdvancedUserActions = ({
 						<Box borderWidth="1px" borderRadius="md" px={4} py={4}>
 							<Stack spacing={3}>
 								<Text fontWeight="semibold">
-									{t(
-										"filters.advancedActions.serviceChange.title",
-										"Change users' service",
-									)}
+									{t("filters.advancedActions.serviceChange.title")}
 								</Text>
 								<Text fontSize="sm" color="gray.500">
-									{t(
-										"filters.advancedActions.serviceChange.helper",
-										"Move the filtered users to another service.",
-									)}
+									{t("filters.advancedActions.serviceChange.helper")}
 								</Text>
 								<Select
-									placeholder={t(
-										"filters.advancedActions.serviceChange.placeholder",
-										"Select target service",
-									)}
+									placeholder={t("filters.advancedActions.serviceChange.placeholder")}
 									value={targetServiceValue}
 									onChange={(event) =>
 										setTargetServiceValue(event.target.value)
 									}
 									size="sm"
 								>
-									{servicesStore.serviceOptions.map((service) => (
+									{serviceOptions.map((service) => (
 										<option key={service.id} value={String(service.id)}>
 											{service.name}
 										</option>
@@ -512,10 +554,7 @@ const AdvancedUserActions = ({
 									isLoading={isChangingService}
 									onClick={handleChangeService}
 								>
-									{t(
-										"filters.advancedActions.serviceChange.button",
-										"Move to service",
-									)}
+									{t("filters.advancedActions.serviceChange.button")}
 								</Button>
 							</Stack>
 						</Box>
@@ -524,15 +563,78 @@ const AdvancedUserActions = ({
 			)}
 
 			<Box borderWidth="1px" borderRadius="md" px={4} py={4}>
+				<Stack spacing={3}>
+					<Box>
+						<Text fontWeight="semibold">
+							{t("filters.advancedActions.conditions.title")}
+						</Text>
+						<Text fontSize="sm" color="gray.500">
+							{t("filters.advancedActions.conditions.help")}
+						</Text>
+					</Box>
+					<FormControl>
+						<FormLabel fontSize="sm">
+							{t("filters.advancedActions.conditions.usernames")}
+						</FormLabel>
+						<Textarea
+							value={targetUsernames}
+							onChange={(event) => setTargetUsernames(event.target.value)}
+							rows={3}
+							fontFamily="mono"
+							placeholder={t("filters.advancedActions.conditions.usernamesPlaceholder")}
+						/>
+						<FormHelperText>
+							{t("filters.advancedActions.conditions.usernamesHelp")}
+						</FormHelperText>
+					</FormControl>
+					<SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
+						<FormControl>
+							<FormLabel fontSize="sm">
+								{t("filters.advancedActions.conditions.lastOnline")}
+							</FormLabel>
+							<NumericInput
+								value={lastOnlineDays}
+								onChange={(value) => setLastOnlineDays(value)}
+								min={1}
+								step={1}
+								w="full"
+							/>
+						</FormControl>
+						<FormControl>
+							<FormLabel fontSize="sm">
+								{t("filters.advancedActions.conditions.statusAge")}
+							</FormLabel>
+							<NumericInput
+								value={statusAgeDays}
+								onChange={(value) => setStatusAgeDays(value)}
+								min={1}
+								step={1}
+								w="full"
+							/>
+						</FormControl>
+						<FormControl>
+							<FormLabel fontSize="sm">
+								{t("filters.advancedActions.conditions.createdBefore")}
+							</FormLabel>
+							<NumericInput
+								value={createdBeforeDays}
+								onChange={(value) => setCreatedBeforeDays(value)}
+								min={1}
+								step={1}
+								w="full"
+							/>
+						</FormControl>
+					</SimpleGrid>
+				</Stack>
+			</Box>
+
+			<Box borderWidth="1px" borderRadius="md" px={4} py={4}>
 				<Stack spacing={2}>
 					<Text fontWeight="semibold">
-						{t("filters.advancedActions.scopeStatuses.title", "Status scope")}
+						{t("filters.advancedActions.scopeStatuses.title")}
 					</Text>
 					<Text fontSize="sm" color="gray.500">
-						{t(
-							"filters.advancedActions.scopeStatuses.helper",
-							"Choose which user statuses are affected by expiration and traffic changes.",
-						)}
+						{t("filters.advancedActions.scopeStatuses.helper")}
 					</Text>
 					<HStack spacing={3} flexWrap="wrap">
 						{scopeStatusOptions.map((status) => (
@@ -555,20 +657,14 @@ const AdvancedUserActions = ({
 				<Box borderWidth="1px" borderRadius="md" px={4} py={4}>
 					<Stack spacing={2}>
 						<Text fontWeight="semibold">
-							{t(
-								"filters.advancedActions.expireSection.title",
-								"Expiration dates",
-							)}
+							{t("filters.advancedActions.expireSection.title")}
 						</Text>
 						<Text fontSize="sm" color="gray.500">
-							{t(
-								"filters.advancedActions.expireSection.description",
-								"Add or subtract days from every user's expiration timestamp.",
-							)}
+							{t("filters.advancedActions.expireSection.description")}
 						</Text>
 						<FormControl>
 							<FormLabel>
-								{t("filters.advancedActions.expireSection.inputLabel", "Days")}
+								{t("filters.advancedActions.expireSection.inputLabel")}
 							</FormLabel>
 							<NumericInput
 								value={expireDays}
@@ -578,10 +674,7 @@ const AdvancedUserActions = ({
 								w="full"
 							/>
 							<FormHelperText>
-								{t(
-									"filters.advancedActions.expireSection.helper",
-									"The entered value will be added or removed when you click a button.",
-								)}
+								{t("filters.advancedActions.expireSection.helper")}
 							</FormHelperText>
 						</FormControl>
 						<HStack spacing={2} flexWrap="wrap">
@@ -592,10 +685,7 @@ const AdvancedUserActions = ({
 								minW="150px"
 								onClick={() => handleExpireAction("extend_expire")}
 							>
-								{t(
-									"filters.advancedActions.expireSection.addButton",
-									"Add days to all users",
-								)}
+								{t("filters.advancedActions.expireSection.addButton")}
 							</Button>
 							<Button
 								colorScheme="gray"
@@ -605,10 +695,7 @@ const AdvancedUserActions = ({
 								minW="150px"
 								onClick={() => handleExpireAction("reduce_expire")}
 							>
-								{t(
-									"filters.advancedActions.expireSection.removeButton",
-									"Subtract days from all users",
-								)}
+								{t("filters.advancedActions.expireSection.removeButton")}
 							</Button>
 						</HStack>
 					</Stack>
@@ -617,23 +704,14 @@ const AdvancedUserActions = ({
 				<Box borderWidth="1px" borderRadius="md" px={4} py={4}>
 					<Stack spacing={2}>
 						<Text fontWeight="semibold">
-							{t(
-								"filters.advancedActions.trafficSection.title",
-								"Usage and traffic",
-							)}
+							{t("filters.advancedActions.trafficSection.title")}
 						</Text>
 						<Text fontSize="sm" color="gray.500">
-							{t(
-								"filters.advancedActions.trafficSection.description",
-								"Apply a data limit adjustment to all users.",
-							)}
+							{t("filters.advancedActions.trafficSection.description")}
 						</Text>
 						<FormControl>
 							<FormLabel>
-								{t(
-									"filters.advancedActions.trafficSection.inputLabel",
-									"Gigabytes",
-								)}
+								{t("filters.advancedActions.trafficSection.inputLabel")}
 							</FormLabel>
 							<NumericInput
 								value={trafficGb}
@@ -651,10 +729,7 @@ const AdvancedUserActions = ({
 								minW="150px"
 								onClick={() => handleTrafficAction("increase_traffic")}
 							>
-								{t(
-									"filters.advancedActions.trafficSection.addButton",
-									"Add traffic to all users",
-								)}
+								{t("filters.advancedActions.trafficSection.addButton")}
 							</Button>
 							<Button
 								colorScheme="gray"
@@ -664,10 +739,7 @@ const AdvancedUserActions = ({
 								minW="150px"
 								onClick={() => handleTrafficAction("decrease_traffic")}
 							>
-								{t(
-									"filters.advancedActions.trafficSection.removeButton",
-									"Subtract traffic from all users",
-								)}
+								{t("filters.advancedActions.trafficSection.removeButton")}
 							</Button>
 						</HStack>
 					</Stack>
@@ -676,23 +748,14 @@ const AdvancedUserActions = ({
 				<Box borderWidth="1px" borderRadius="md" px={4} py={4}>
 					<Stack spacing={2}>
 						<Text fontWeight="semibold">
-							{t(
-								"filters.advancedActions.cleanupSection.title",
-								"Cleanup expired or limited",
-							)}
+							{t("filters.advancedActions.cleanupSection.title")}
 						</Text>
 						<Text fontSize="sm" color="gray.500">
-							{t(
-								"filters.advancedActions.cleanupSection.description",
-								"Remove users that have been expired/limited for the selected number of days.",
-							)}
+							{t("filters.advancedActions.cleanupSection.description")}
 						</Text>
 						<FormControl>
 							<FormLabel>
-								{t(
-									"filters.advancedActions.cleanupSection.daysLabel",
-									"Days since status change",
-								)}
+								{t("filters.advancedActions.cleanupSection.daysLabel")}
 							</FormLabel>
 							<NumericInput
 								value={cleanupDays}
@@ -722,10 +785,7 @@ const AdvancedUserActions = ({
 							w="full"
 							onClick={handleCleanup}
 						>
-							{t(
-								"filters.advancedActions.cleanupSection.button",
-								"Delete selected users",
-							)}
+							{t("filters.advancedActions.cleanupSection.button")}
 						</Button>
 					</Stack>
 				</Box>
@@ -741,10 +801,10 @@ const AdvancedUserActions = ({
 		<>
 			{compact ? (
 				<Tooltip
-					label={t("filters.advancedActions.button", "Advanced actions")}
+					label={t("filters.advancedActions.button")}
 				>
 					<IconButton
-						aria-label={t("filters.advancedActions.button", "Advanced actions")}
+						aria-label={t("filters.advancedActions.button")}
 						icon={<AdvancedActionsIcon />}
 						onClick={onOpen}
 						variant="outline"
@@ -766,7 +826,7 @@ const AdvancedUserActions = ({
 					fontWeight="semibold"
 					whiteSpace="nowrap"
 				>
-					{t("filters.advancedActions.button", "Advanced actions")}
+					{t("filters.advancedActions.button")}
 				</Button>
 			)}
 
@@ -774,10 +834,10 @@ const AdvancedUserActions = ({
 				isOpen={isOpen}
 				onClose={onClose}
 				size="lg"
-				title={t("filters.advancedActions.modalTitle", "Advanced actions")}
+				title={t("filters.advancedActions.modalTitle")}
 				footer={
 					<Button variant="ghost" onClick={onClose}>
-						{t("filters.advancedActions.close", "Close")}
+						{t("close")}
 					</Button>
 				}
 			>

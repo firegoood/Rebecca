@@ -40,7 +40,12 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, useHref, useLocation, useNavigate } from "react-router-dom";
-import { AdminRole, AdminSection, UserPermissionToggle } from "types/Admin";
+import {
+	AdminManagementPermission,
+	AdminRole,
+	AdminSection,
+	UserPermissionToggle,
+} from "types/Admin";
 import {
 	getTutorialManifestUrl,
 	getTutorialSeenKey,
@@ -122,6 +127,11 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 	const isPrivilegedAdmin = isFullAccess || userData.role === AdminRole.Sudo;
 	const canUseBulkActions =
 		isFullAccess ||
+		Boolean(
+			userData.permissions?.admin_management?.[
+				AdminManagementPermission.Edit
+			],
+		) ||
 		Boolean(
 			userData.permissions?.users?.[UserPermissionToggle.Create] ||
 				userData.permissions?.users?.[UserPermissionToggle.Delete] ||
@@ -207,7 +217,7 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 			: null,
 		sectionAccess?.[AdminSection.Integrations]
 			? {
-					title: t("header.integrationSettings", "Settings"),
+					title: t("header.integrationSettings"),
 					url: "/settings",
 					icon: MasterSettingsIconStyled,
 				}
@@ -221,34 +231,34 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 			: null,
 		sectionAccess?.[AdminSection.Xray]
 			? {
-					title: t("pages.xray.logs", "Xray Logs"),
+					title: t("pages.xray.logs"),
 					url: "/xray-logs",
 					icon: XrayLogsIconStyled,
 				}
 			: null,
 		sectionAccess?.[AdminSection.Xray]
 			? {
-					title: t("header.accessInsights", "Access insights"),
+					title: t("header.accessInsights"),
 					url: "/access-insights",
 					icon: InsightsIconStyled,
 				}
 			: null,
 		isPrivilegedAdmin
 			? {
-					title: t("apiDocs.menu", "API Docs"),
+					title: t("apiDocs.menu"),
 					url: "/api-docs",
 					icon: ApiDocsIconStyled,
 				}
 			: null,
 		isPrivilegedAdmin
 			? {
-					title: t("phpmyadmin.menu", "phpMyAdmin"),
+					title: t("phpmyadmin.menu"),
 					url: "/phpmyadmin",
 					icon: PHPMyAdminIconStyled,
 				}
 			: null,
 		{
-			title: t("tutorials.menu", "Tutorials"),
+			title: t("tutorials.menu"),
 			url: tutorialsUrl,
 			icon: TutorialIconStyled,
 		},
@@ -257,7 +267,7 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 	const settingsSubItems: SidebarSubItems = [...baseSettingsSubItems];
 	if (canViewServicesSection) {
 		settingsSubItems.unshift({
-			title: t("services.menu", "Services"),
+			title: t("services.title"),
 			url: "/services",
 			icon: ServicesIconStyled,
 		});
@@ -292,7 +302,7 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 
 	if (canUseBulkActions) {
 		items.push({
-			title: t("bulkActions.menu", "Bulk Actions"),
+			title: t("bulkActions.menu"),
 			url: "/bulk-actions",
 			icon: BulkActionsIconStyled,
 		});
@@ -308,14 +318,14 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 
 	if (canViewUsage) {
 		items.push({
-			title: t("usage.menu", "Usage"),
+			title: t("usage.menu"),
 			url: "/usage",
 			icon: UsageIconStyled,
 		});
 	}
 	if (canViewAdmins) {
 		items.push({
-			title: t("admins", "Admins"),
+			title: t("admins"),
 			url: "/admins",
 			icon: AdminIconStyled,
 		});
@@ -339,15 +349,15 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 	const pickSetting = (url: string) => settingsByUrl.get(url);
 	const compactGroups = [
 		{
-			title: t("sidebar.groups.dashboard", "Dashboard"),
+			title: t("dashboard"),
 			items: [pickDirect("/")],
 		},
 		{
-			title: t("sidebar.groups.users", "Users"),
+			title: t("users"),
 			items: [pickDirect("/users"), pickDirect("/bulk-actions")],
 		},
 		{
-			title: t("sidebar.groups.infrastructure", "Infrastructure"),
+			title: t("sidebar.groups.infrastructure"),
 			items: [
 				pickSetting("/node-settings"),
 				pickSetting("/services"),
@@ -355,7 +365,7 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 			],
 		},
 		{
-			title: t("sidebar.groups.admin", "Admin"),
+			title: t("admins.admin"),
 			items: [
 				pickDirect("/admins"),
 				pickDirect("/usage"),
@@ -363,7 +373,7 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 			],
 		},
 		{
-			title: t("sidebar.groups.system", "System"),
+			title: t("sidebar.groups.system"),
 			items: [
 				pickSetting("/settings"),
 				pickSetting("/xray-settings"),
