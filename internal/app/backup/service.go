@@ -30,6 +30,11 @@ type Service struct {
 	fileRoots   []FileRoot
 }
 
+const (
+	maxBackupExtractBytes   int64 = 1 << 30
+	maxBackupArchiveEntries       = 10_000
+)
+
 type Option func(*Service)
 
 func WithFileRoots(roots []FileRoot) Option {
@@ -354,14 +359,41 @@ func (s *Service) restoreMySQL(ctx context.Context, payloadPath string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.dropMySQLTables(ctx); err != nil {
-		return err
-	}
 	filteredPath := filepath.Join(tempDir, "database.sql")
 	if err := filterMySQLDumpForDatabase(payloadPath, filteredPath); err != nil {
 		return err
 	}
-	input, err := os.Open(filteredPath)
+	rollbackRawPath := filepath.Join(tempDir, "rollback.sql")
+	if err := s.exportMySQL(ctx, rollbackRawPath); err != nil {
+		return Error{Message: "Failed to create a rollback backup before restoring MySQL/MariaDB: " + err.Error()}
+	}
+	rollbackPath := filepath.Join(tempDir, "rollback-filtered.sql")
+	if err := filterMySQLDumpForDatabase(rollbackRawPath, rollbackPath); err != nil {
+		return err
+	}
+	if err := s.dropMySQLTables(ctx); err != nil {
+		return s.restoreMySQLRollback(command, defaultsFile, databaseName, rollbackPath, err)
+	}
+	if err := restoreMySQLDump(ctx, command, defaultsFile, databaseName, filteredPath); err != nil {
+		return s.restoreMySQLRollback(command, defaultsFile, databaseName, rollbackPath, err)
+	}
+	return nil
+}
+
+func (s *Service) restoreMySQLRollback(command string, defaultsFile string, databaseName string, rollbackPath string, restoreErr error) error {
+	rollbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := s.dropMySQLTables(rollbackCtx); err != nil {
+		return Error{Message: restoreErr.Error() + "; automatic rollback failed: " + err.Error()}
+	}
+	if err := restoreMySQLDump(rollbackCtx, command, defaultsFile, databaseName, rollbackPath); err != nil {
+		return Error{Message: restoreErr.Error() + "; automatic rollback failed: " + err.Error()}
+	}
+	return restoreErr
+}
+
+func restoreMySQLDump(ctx context.Context, command string, defaultsFile string, databaseName string, inputPath string) error {
+	input, err := os.Open(inputPath)
 	if err != nil {
 		return err
 	}
@@ -1050,6 +1082,8 @@ func safeExtract(archivePath string, destination string) error {
 	if err != nil {
 		return err
 	}
+	entries := 0
+	var extracted int64
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
@@ -1057,6 +1091,10 @@ func safeExtract(archivePath string, destination string) error {
 		}
 		if err != nil {
 			return err
+		}
+		entries++
+		if entries > maxBackupArchiveEntries {
+			return Error{Message: "Backup archive contains too many entries"}
 		}
 		entryName, err := safeArchiveName(header.Name)
 		if err != nil {
@@ -1069,6 +1107,9 @@ func safeExtract(archivePath string, destination string) error {
 				return err
 			}
 		case tar.TypeReg, tar.TypeRegA:
+			if header.Size < 0 || header.Size > maxBackupExtractBytes-extracted {
+				return Error{Message: "Backup archive is too large to extract"}
+			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
@@ -1076,13 +1117,15 @@ func safeExtract(archivePath string, destination string) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(out, tarReader); err != nil {
+			written, copyErr := io.Copy(out, tarReader)
+			if copyErr != nil {
 				_ = out.Close()
-				return err
+				return copyErr
 			}
 			if err := out.Close(); err != nil {
 				return err
 			}
+			extracted += written
 		default:
 			return Error{Message: "Backup archive contains unsupported linked or device entries"}
 		}

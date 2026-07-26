@@ -10,10 +10,12 @@ import {
 } from "@chakra-ui/react";
 import {
 	BellAlertIcon,
+	BoltIcon,
 	BookOpenIcon,
 	BriefcaseIcon,
 	ChartBarIcon,
 	CircleStackIcon,
+	ClockIcon,
 	CodeBracketSquareIcon,
 	Cog6ToothIcon,
 	Cog8ToothIcon,
@@ -21,7 +23,6 @@ import {
 	EyeIcon,
 	HomeIcon,
 	LinkIcon,
-	QueueListIcon,
 	ServerStackIcon,
 	Squares2X2Icon,
 	UserCircleIcon,
@@ -41,10 +42,9 @@ import {
 import { useTranslation } from "react-i18next";
 import { NavLink, useHref, useLocation, useNavigate } from "react-router-dom";
 import {
-	AdminManagementPermission,
 	AdminRole,
 	AdminSection,
-	UserPermissionToggle,
+	AdminSudoScope,
 } from "types/Admin";
 import {
 	getTutorialManifestUrl,
@@ -61,7 +61,8 @@ const iconProps = {
 
 const HomeIconStyled = chakra(HomeIcon, iconProps);
 const UsersIconStyled = chakra(UserGroupIcon, iconProps);
-const BulkActionsIconStyled = chakra(QueueListIcon, iconProps);
+const BulkActionsIconStyled = chakra(BoltIcon, iconProps);
+const RecentActionsIconStyled = chakra(ClockIcon, iconProps);
 const SettingsIconStyled = chakra(Cog6ToothIcon, iconProps);
 const MasterSettingsIconStyled = chakra(Cog8ToothIcon, iconProps);
 const NodeIconStyled = chakra(ServerStackIcon, iconProps);
@@ -125,18 +126,6 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 	const sectionAccess = userData.permissions?.sections;
 	const isFullAccess = userData.role === AdminRole.FullAccess;
 	const isPrivilegedAdmin = isFullAccess || userData.role === AdminRole.Sudo;
-	const canUseBulkActions =
-		isFullAccess ||
-		Boolean(
-			userData.permissions?.admin_management?.[
-				AdminManagementPermission.Edit
-			],
-		) ||
-		Boolean(
-			userData.permissions?.users?.[UserPermissionToggle.Create] ||
-				userData.permissions?.users?.[UserPermissionToggle.Delete] ||
-				userData.permissions?.users?.[UserPermissionToggle.AdvancedActions],
-		);
 	const sidebarBg = useColorModeValue("panel.sidebar", "panel.sidebar");
 	const sidebarBorderColor = useColorModeValue("panel.border", "panel.border");
 	const sidebarPanelBg = useColorModeValue("panel.elevated", "panel.elevated");
@@ -165,6 +154,10 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 	const canViewServicesSection = Boolean(
 		sectionAccess?.[AdminSection.Services],
 	);
+	const canViewRecentActions =
+		isFullAccess ||
+		(userData.role === AdminRole.Sudo &&
+			Boolean(userData.permissions?.sudo?.[AdminSudoScope.Xray]));
 	const [hasNewTutorials, setHasNewTutorials] = useState(false);
 
 	const checkTutorialUpdates = useCallback(async () => {
@@ -243,6 +236,13 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 					icon: InsightsIconStyled,
 				}
 			: null,
+		canViewRecentActions
+			? {
+					title: t("recentActions.title"),
+					url: "/recent-actions",
+					icon: RecentActionsIconStyled,
+				}
+			: null,
 		isPrivilegedAdmin
 			? {
 					title: t("apiDocs.menu"),
@@ -300,13 +300,11 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 		{ title: t("users"), url: "/users", icon: UsersIconStyled },
 	];
 
-	if (canUseBulkActions) {
-		items.push({
-			title: t("bulkActions.menu"),
-			url: "/bulk-actions",
-			icon: BulkActionsIconStyled,
-		});
-	}
+	items.push({
+		title: t("bulkActions.menu"),
+		url: "/bulk-actions",
+		icon: BulkActionsIconStyled,
+	});
 
 	if (selfAccess.self_myaccount) {
 		items.splice(1, 0, {
@@ -379,6 +377,7 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 				pickSetting("/xray-settings"),
 				pickSetting("/xray-logs"),
 				pickSetting("/access-insights"),
+				pickSetting("/recent-actions"),
 				pickSetting("/api-docs"),
 				pickSetting("/phpmyadmin"),
 				pickSetting(tutorialsUrl),

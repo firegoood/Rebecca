@@ -6,6 +6,22 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+const maxAPIRequestBodyBytes int64 = 8 << 20
+
+func withAPIRequestBodyLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Backup import accepts uploads up to 128 MiB in saveBackupUpload.
+		if r.URL.Path != "/api/settings/backup/import" {
+			if r.ContentLength > maxAPIRequestBodyBytes {
+				writeError(w, http.StatusRequestEntityTooLarge, "request body is too large")
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, maxAPIRequestBodyBytes)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
 
@@ -52,7 +68,7 @@ func (s *Server) Handler() http.Handler {
 	})
 
 	r.NotFound(s.handleHomeOrSubscriptionPath)
-	return r
+	return withAPIRequestBodyLimit(r)
 }
 
 func (s *Server) registerAdminRoutes(r chi.Router) {
@@ -83,6 +99,8 @@ func (s *Server) registerMyAccountRoutes(r chi.Router) {
 }
 
 func (s *Server) registerCoreRoutes(r chi.Router) {
+	r.HandleFunc("/core/recent-actions/*", s.requireSudo(s.handleRecentActionsPath))
+	r.HandleFunc("/core/recent-actions", s.requireSudo(s.handleRecentActionsRoot))
 	r.HandleFunc("/core/access/*", s.requireAdmin(s.handleCoreAccessPath))
 	r.HandleFunc("/core/logs", s.requireSudo(s.handleRuntimeLogsWebSocket))
 	r.HandleFunc("/core/restart", s.requireSudo(s.handleCoreRestart))

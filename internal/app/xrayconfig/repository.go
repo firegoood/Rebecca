@@ -85,6 +85,15 @@ func (r Repository) GetTargetRawConfig(ctx context.Context, targetID string) (ma
 	return r.NodeEffectiveRawConfig(ctx, *nodeID, master)
 }
 
+func (r Repository) GetTargetState(ctx context.Context, targetID string) (TargetState, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return TargetState{}, err
+	}
+	defer rollbackQuietly(tx)
+	return r.targetStateTx(ctx, tx, targetID)
+}
+
 func (r Repository) SaveTargetRawConfig(ctx context.Context, targetID string, payload map[string]any) (map[string]any, error) {
 	kind, nodeID, err := ParseTargetID(targetID)
 	if err != nil {
@@ -103,6 +112,10 @@ func (r Repository) SaveTargetRawConfig(ctx context.Context, targetID string, pa
 		return nil, err
 	}
 	defer rollbackQuietly(tx)
+	before, err := r.captureMutationForRecordTx(ctx, tx, SnapshotScope{TargetIDs: []string{targetID}})
+	if err != nil {
+		return nil, err
+	}
 
 	if kind == MasterTargetID {
 		if err := r.saveMasterRawConfigTx(ctx, tx, normalized); err != nil {
@@ -122,6 +135,16 @@ func (r Repository) SaveTargetRawConfig(ctx context.Context, targetID string, pa
 			return nil, err
 		}
 	}
+	after, err := r.captureMutationForRecordTx(ctx, tx, SnapshotScope{TargetIDs: []string{targetID}})
+	if err != nil {
+		return nil, err
+	}
+	if err := r.recordMutationTx(ctx, tx, Mutation{
+		ActionType: "xray.config.update", ResourceType: "xray_config", ResourceKey: targetID,
+		Summary: "Updated Xray configuration", Before: before, After: after,
+	}); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -139,6 +162,11 @@ func (r Repository) SetNodeConfigMode(ctx context.Context, nodeID int64, mode st
 		return err
 	}
 	defer rollbackQuietly(tx)
+	targetID := NodeTargetID(nodeID)
+	before, err := r.captureMutationForRecordTx(ctx, tx, SnapshotScope{TargetIDs: []string{targetID}})
+	if err != nil {
+		return err
+	}
 
 	if err := r.ensureNodeExistsTx(ctx, tx, nodeID); err != nil {
 		return err
@@ -165,6 +193,16 @@ func (r Repository) SetNodeConfigMode(ctx context.Context, nodeID int64, mode st
 		}
 	}
 	if err := r.enqueueSyncConfigTx(ctx, tx, &nodeID, map[string]any{"target_id": NodeTargetID(nodeID), "mode": normalizedMode}); err != nil {
+		return err
+	}
+	after, err := r.captureMutationForRecordTx(ctx, tx, SnapshotScope{TargetIDs: []string{targetID}})
+	if err != nil {
+		return err
+	}
+	if err := r.recordMutationTx(ctx, tx, Mutation{
+		ActionType: "xray.config.mode.update", ResourceType: "xray_config", ResourceKey: targetID,
+		Summary: "Updated Xray configuration mode", Before: before, After: after,
+	}); err != nil {
 		return err
 	}
 	return tx.Commit()
