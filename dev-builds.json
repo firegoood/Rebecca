@@ -1,9 +1,29 @@
 {
   "schema_version": 1,
   "project": "Rebecca",
-  "latest": "dev-ee24375",
-  "updated_at": "2026-07-26T14:09:06Z",
+  "latest": "dev-395ff60",
+  "updated_at": "2026-07-27T08:33:14Z",
   "builds": [
+    {
+      "tag": "dev-395ff60",
+      "sha": "395ff600820fdf3afd64290c58cd84488fa164eb",
+      "branch": "dev",
+      "workflow": "Binary Build",
+      "run_id": "30250067091",
+      "run_number": "622",
+      "created_at": "2026-07-27T08:33:14Z",
+      "release_tag": "dev-builds",
+      "assets": {
+        "windows-amd64": {
+          "name": "rebecca-windows-amd64-dev-395ff60.zip",
+          "url": "https://github.com/rebeccapanel/Rebecca/releases/download/dev-builds/rebecca-windows-amd64-dev-395ff60.zip"
+        },
+        "linux-amd64": {
+          "name": "rebecca-linux-amd64-dev-395ff60.tar.gz",
+          "url": "https://github.com/rebeccapanel/Rebecca/releases/download/dev-builds/rebecca-linux-amd64-dev-395ff60.tar.gz"
+        }
+      }
+    },
     {
       "tag": "dev-ee24375",
       "sha": "ee2437505a405b71d3a35cac2735d4fbb95ba857",
