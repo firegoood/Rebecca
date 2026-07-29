@@ -3,6 +3,7 @@ package nodecontroller
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -463,7 +464,7 @@ VALUES
 	}
 }
 
-func TestControllerProcessQueueDoesNotStarveConnectedNodeBehindBrokenNodes(t *testing.T) {
+func TestControllerProcessQueueRetriesUnavailableUserDeltaWithoutFullSync(t *testing.T) {
 	ctx := context.Background()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "queue-starvation.db")+"?_pragma=busy_timeout(30000)")
 	if err != nil {
@@ -519,20 +520,28 @@ VALUES
 	if err != nil {
 		t.Fatal(err)
 	}
+	for userID := 201; userID <= 225; userID++ {
+		if _, err := db.ExecContext(ctx, `
+INSERT INTO node_operations (operation_type, node_id, user_id, payload, status, idempotency_key, created_at, updated_at)
+VALUES ('add_user', 50, ?, '{}', 'pending', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, userID, fmt.Sprintf("good-node-op-%d", userID)); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	controller := NewController(NewRepository(db, "sqlite"))
 	result, err := controller.ProcessQueue(ctx, ProcessOperationsRequest{Limit: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Processed != 1 || result.Done != 1 || result.Retrying != 0 {
-		t.Fatalf("expected connected operation to be deferred to full-sync recovery, got %#v", result)
+	if result.Processed != 1 || result.Done != 0 || result.Retrying != 1 {
+		t.Fatalf("expected unavailable user delta to be retried, got %#v", result)
 	}
 	assertRepositoryString(t, db, `SELECT status FROM node_operations WHERE node_id = 24`, "done")
-	assertRepositoryString(t, db, `SELECT status FROM node_operations WHERE node_id = 50`, "done")
+	assertRepositoryInt64(t, db, `SELECT COUNT(*) FROM node_operations WHERE node_id = 50 AND status = 'retrying'`, 1)
 	assertRepositoryInt64(t, db, `SELECT attempts FROM node_operations WHERE node_id = 24`, 0)
-	assertRepositoryInt64(t, db, `SELECT attempts FROM node_operations WHERE node_id = 50`, 0)
-	assertRepositoryString(t, db, `SELECT status FROM nodes WHERE id = 50`, "error")
+	assertRepositoryInt64(t, db, `SELECT COUNT(*) FROM node_operations WHERE node_id = 50 AND attempts = 1`, 1)
+	assertRepositoryString(t, db, `SELECT status FROM nodes WHERE id = 50`, "connected")
+	assertRepositoryInt64(t, db, `SELECT COUNT(*) FROM node_operations WHERE node_id = 50 AND operation_type = 'sync_config'`, 0)
 }
 
 func TestControllerProcessQueueMarksDisabledNodeOperationPermanent(t *testing.T) {
@@ -1099,6 +1108,57 @@ VALUES (1, 'connected', 'ok', '1.0.0', '2026-06-26 00:00:00');
 		t.Fatal(err)
 	}
 	assertRepositoryInt64(t, db, `SELECT COUNT(*) FROM node_operations WHERE operation_type = 'sync_config' AND node_id = 1`, 1)
+}
+
+func TestRepositoryStatusUpdatesDoNotReenableDisabledNode(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "disabled-node-status.db")+"?_pragma=busy_timeout(30000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	_, err = db.ExecContext(ctx, `
+CREATE TABLE nodes (
+	id INTEGER PRIMARY KEY,
+	status TEXT,
+	message TEXT,
+	xray_version TEXT,
+	last_status_change DATETIME
+);
+CREATE TABLE node_operations (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	operation_type TEXT NOT NULL,
+	node_id INTEGER NULL,
+	user_id INTEGER NULL,
+	payload TEXT NOT NULL,
+	status TEXT NOT NULL DEFAULT 'pending',
+	attempts INTEGER NOT NULL DEFAULT 0,
+	last_error TEXT NULL,
+	idempotency_key TEXT NOT NULL UNIQUE,
+	created_at DATETIME NOT NULL,
+	updated_at DATETIME NOT NULL
+);
+INSERT INTO nodes (id, status, message, xray_version, last_status_change)
+VALUES (1, 'disabled', NULL, '1.0.0', '2026-06-26 00:00:00');
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo := NewRepository(db, "sqlite")
+	if err := repo.SetConnecting(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetConnected(ctx, 1, "1.0.1", "ok"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetError(ctx, 1, "dial failed"); err != nil {
+		t.Fatal(err)
+	}
+
+	assertRepositoryString(t, db, `SELECT status FROM nodes WHERE id = 1`, "disabled")
+	assertRepositoryInt64(t, db, `SELECT COUNT(*) FROM node_operations`, 0)
 }
 
 func TestRepositoryQueueSyncConfigCoalescesPendingFullSyncs(t *testing.T) {
