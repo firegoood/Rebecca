@@ -565,18 +565,25 @@ const UsageMetricCard: FC<{
 			minH={history ? "126px" : "96px"}
 		>
 			<Stack spacing={2}>
-				<HStack justifyContent="space-between" alignItems="center" gap={3}>
-					<Text fontSize="xs" fontWeight="semibold" color={labelColor}>
+				<Flex justifyContent="space-between" alignItems="center" gap={2} wrap="wrap">
+					<Text
+						fontSize="xs"
+						fontWeight="semibold"
+						color={labelColor}
+						whiteSpace="nowrap"
+						overflow="hidden"
+						textOverflow="ellipsis"
+					>
 						{label}
 					</Text>
 					{onOpen && actionLabel && (
-						<Button size="xs" variant="outline" onClick={onOpen} flexShrink={0}>
+						<Button size="xs" variant="outline" onClick={onOpen} flexShrink={0} ms="auto">
 							{actionLabel}
 						</Button>
 					)}
-				</HStack>
-				<HStack justifyContent="space-between" alignItems="baseline" gap={3}>
-					<Text fontSize="2xl" lineHeight="1" fontWeight="800" color={valueColor}>
+				</Flex>
+				<Flex justifyContent="space-between" alignItems="baseline" gap={2} wrap="wrap">
+					<Text fontSize="2xl" lineHeight="1" fontWeight="800" color={valueColor} whiteSpace="nowrap">
 						{Math.max(0, percent).toFixed(1)}%
 					</Text>
 					{detail && (
@@ -584,12 +591,13 @@ const UsageMetricCard: FC<{
 							fontSize="xs"
 							color={mutedColor}
 							className="rb-usage-pair"
-							textAlign="end"
+							textAlign="center"
+							flex="1 1 auto"
 						>
 							{detail}
 						</Text>
 					)}
-				</HStack>
+				</Flex>
 				<Progress
 					value={safePercent}
 					colorScheme={colorScheme}
@@ -632,9 +640,16 @@ const SpeedItem: FC<{
 				{icon}
 			</Box>
 			<Box minW={0}>
-				<Text fontSize="xs" fontWeight="semibold" color={labelColor}>
-					{label}
-				</Text>
+				<Text
+				fontSize="xs"
+				fontWeight="semibold"
+				color={labelColor}
+				whiteSpace="nowrap"
+				overflow="hidden"
+				textOverflow="ellipsis"
+			>
+				{label}
+			</Text>
 				<Text fontSize={{ base: "lg", md: "xl" }} fontWeight="800" mt={1}>
 					{value}
 				</Text>
@@ -662,14 +677,21 @@ const NetworkSpeedCard: FC<{
 			p={3}
 		>
 			<Stack spacing={3}>
-				<HStack justifyContent="space-between" alignItems="center" gap={3}>
-					<Text fontSize="xs" fontWeight="semibold" color={labelColor}>
+				<Flex justifyContent="space-between" alignItems="center" gap={2} wrap="wrap">
+					<Text
+						fontSize="xs"
+						fontWeight="semibold"
+						color={labelColor}
+						whiteSpace="nowrap"
+						overflow="hidden"
+						textOverflow="ellipsis"
+					>
 						{t("networkHistory")}
 					</Text>
-					<Button size="xs" variant="outline" onClick={onOpen} flexShrink={0}>
+					<Button size="xs" variant="outline" onClick={onOpen} flexShrink={0} ms="auto">
 						{t("viewHistory")}
 					</Button>
-				</HStack>
+				</Flex>
 				<SimpleGrid columns={{ base: 1, sm: 2 }} gap={3}>
 					<SpeedItem
 						icon={<DownloadIcon />}
@@ -1041,7 +1063,7 @@ const PanelOverviewCard: FC<{
 						}
 					/>
 				</SimpleGrid>
-				<SimpleGrid columns={{ base: 1, md: 3 }} gap={4}>
+				<SimpleGrid columns={{ base: 1, md: 2 }} gap={4}>
 					<MetricBadge
 						label={t("threads")}
 						value={formatNumberValue(data.app_threads)}
@@ -1090,11 +1112,13 @@ const UsersOverviewCard: FC<{
 					value={formatNumberValue(data.users_limited)}
 					colorScheme="yellow"
 				/>
-				<MetricBadge
-					label={t("status.on_hold")}
-					value={formatNumberValue(data.users_on_hold)}
-					colorScheme="purple"
-				/>
+				<Box gridColumn={{ base: "span 1", sm: "span 2" }}>
+					<MetricBadge
+						label={t("status.on_hold")}
+						value={formatNumberValue(data.users_on_hold)}
+						colorScheme="purple"
+					/>
+				</Box>
 			</SimpleGrid>
 		</Stack>
 	</ChartBox>
@@ -1116,7 +1140,7 @@ const YourUsageCard: FC<{
 	return (
 		<ChartBox title={t("yourUsage")}>
 			<Stack spacing={4}>
-				<SimpleGrid columns={{ base: 1, md: 2 }} gap={4}>
+				<SimpleGrid columns={1} gap={4}>
 					<MetricBadge
 						label={t("total")}
 						value={formatNumberValue(data.total_users)}
@@ -1165,7 +1189,7 @@ const AdminOverviewCard: FC<{
 					/>
 				</SimpleGrid>
 				{data.top_admin_username && (
-					<Box>
+					<Flex wrap="wrap" gap={4} alignItems="center">
 						<Text fontSize="sm" color="gray.500">
 							{t("topAdmin")}:{" "}
 							<Text as="span" fontWeight="semibold">
@@ -1175,7 +1199,7 @@ const AdminOverviewCard: FC<{
 						<Text fontSize="sm" color="gray.500">
 							{t("topAdminUsage")}: {formatBytes(data.top_admin_usage)}
 						</Text>
-					</Box>
+					</Flex>
 				)}
 			</Stack>
 		</ChartBox>
