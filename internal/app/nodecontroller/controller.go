@@ -22,20 +22,40 @@ import (
 type Controller struct {
 	repo         Repository
 	outboundSubs outboundsubapp.Service
+	nodeLocks    *sync.Map
 }
 
 const (
-	maxConcurrentSingleNodeOperations = 2
+	maxConcurrentSingleNodeOperations  = 8
+	maxConcurrentRuntimeUserOperations = 32
+	maxNodeOperationID                 = int64(1<<63 - 1)
 )
 
 func NewController(repo Repository) Controller {
 	return Controller{
 		repo:         repo,
 		outboundSubs: outboundsubapp.NewService(repo.db, repo.dialect),
+		nodeLocks:    &sync.Map{},
 	}
 }
 
+func (c Controller) lockNode(nodeID int64) func() {
+	if c.nodeLocks == nil {
+		return func() {}
+	}
+	value, _ := c.nodeLocks.LoadOrStore(nodeID, &sync.Mutex{})
+	lock := value.(*sync.Mutex)
+	lock.Lock()
+	return lock.Unlock
+}
+
+func (c Controller) PrepareStartupFullSync(ctx context.Context) (int, error) {
+	return c.repo.ReplaceOpenQueueWithFullSync(ctx)
+}
+
 func (c Controller) Connect(ctx context.Context, req Request) (RuntimeResult, error) {
+	unlock := c.lockNode(req.NodeID)
+	defer unlock()
 	if err := c.repo.SetConnecting(ctx, req.NodeID); err != nil {
 		return RuntimeResult{}, err
 	}
@@ -45,6 +65,10 @@ func (c Controller) Connect(ctx context.Context, req Request) (RuntimeResult, er
 		return RuntimeResult{}, friendlyNodeError("connect", req.NodeID, err)
 	}
 	defer client.Close()
+	supersededIDs, err := c.fullSyncOperationIDs(ctx, node.ID)
+	if err != nil {
+		return RuntimeResult{}, err
+	}
 
 	connect, err := client.Control().Connect(ctx, &nodev1.ConnectRequest{MasterId: "rebecca-master"})
 	if err != nil {
@@ -75,7 +99,9 @@ func (c Controller) Connect(ctx context.Context, req Request) (RuntimeResult, er
 	if err != nil {
 		return RuntimeResult{}, err
 	}
-	_, _ = c.ProcessQueue(ctx, ProcessOperationsRequest{NodeID: node.ID, Limit: 50})
+	if _, err := c.repo.MarkOperationsDone(ctx, supersededIDs); err != nil {
+		return RuntimeResult{}, err
+	}
 	return result, nil
 }
 
@@ -84,12 +110,18 @@ func (c Controller) Reconnect(ctx context.Context, req Request) (RuntimeResult, 
 }
 
 func (c Controller) Restart(ctx context.Context, req Request) (RuntimeResult, error) {
+	unlock := c.lockNode(req.NodeID)
+	defer unlock()
 	client, node, err := c.dial(ctx, req.NodeID)
 	if err != nil {
 		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
 		return RuntimeResult{}, friendlyNodeError("restart", req.NodeID, err)
 	}
 	defer client.Close()
+	supersededIDs, err := c.fullSyncOperationIDs(ctx, node.ID)
+	if err != nil {
+		return RuntimeResult{}, err
+	}
 
 	configJSON := strings.TrimSpace(req.ConfigJSON)
 	if configJSON == "" {
@@ -108,7 +140,23 @@ func (c Controller) Restart(ctx context.Context, req Request) (RuntimeResult, er
 		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
 		return RuntimeResult{}, friendlyNodeError("restart", req.NodeID, err)
 	}
-	return c.finishRuntime(ctx, node, res.GetRuntime(), res.GetMessage())
+	result, err := c.finishRuntime(ctx, node, res.GetRuntime(), res.GetMessage())
+	if err != nil {
+		return RuntimeResult{}, err
+	}
+	if _, err := c.repo.MarkOperationsDone(ctx, supersededIDs); err != nil {
+		return RuntimeResult{}, err
+	}
+	return result, nil
+}
+
+func (c Controller) fullSyncOperationIDs(ctx context.Context, nodeID int64) ([]int64, error) {
+	return c.repo.CoalescibleOperationIDsForTarget(ctx, OperationRow{
+		ID:            maxNodeOperationID,
+		OperationType: "sync_config",
+		NodeID:        sql.NullInt64{Int64: nodeID, Valid: true},
+		Payload:       []byte("{}"),
+	})
 }
 
 func (c Controller) Health(ctx context.Context, req Request) (RuntimeResult, error) {
@@ -159,7 +207,7 @@ func (c Controller) RecoverNodes(ctx context.Context, req RecoverNodesRequest) (
 	result := RecoverNodesResult{Checked: len(nodeIDs)}
 	for _, nodeID := range nodeIDs {
 		metricsCtx, cancel := WithDefaultTimeout(ctx)
-		_, err := c.Metrics(metricsCtx, Request{NodeID: nodeID})
+		_, err := c.Connect(metricsCtx, Request{NodeID: nodeID})
 		cancel()
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("node %d: %v", nodeID, err))
@@ -293,7 +341,7 @@ func (c Controller) ProcessQueue(ctx context.Context, req ProcessOperationsReque
 		}
 		groups[idx].operations = append(groups[idx].operations, operation)
 	}
-	if err := c.processOrderedOperationGroups(ctx, groups, blockedNodes, &result); err != nil {
+	if err := c.processOrderedOperationGroups(ctx, groups, blockedNodes, &result, maxConcurrentSingleNodeOperations); err != nil {
 		return result, err
 	}
 	if len(globalCoalesced) > 0 {
@@ -329,7 +377,7 @@ func (c Controller) ProcessRuntimeUserOperations(ctx context.Context, req Proces
 		}
 		groups[idx].operations = append(groups[idx].operations, operation)
 	}
-	if err := c.processOrderedOperationGroups(ctx, groups, blockedNodes, &result); err != nil {
+	if err := c.processOrderedOperationGroups(ctx, groups, blockedNodes, &result, maxConcurrentRuntimeUserOperations); err != nil {
 		return result, err
 	}
 	return result, nil
@@ -340,7 +388,7 @@ type operationGroup struct {
 	operations []OperationRow
 }
 
-func (c Controller) processOrderedOperationGroups(ctx context.Context, groups []operationGroup, blockedNodes map[int64]bool, result *ProcessOperationsResult) error {
+func (c Controller) processOrderedOperationGroups(ctx context.Context, groups []operationGroup, blockedNodes map[int64]bool, result *ProcessOperationsResult, workers int) error {
 	type groupResult struct {
 		result       ProcessOperationsResult
 		blockedNodes map[int64]bool
@@ -349,7 +397,9 @@ func (c Controller) processOrderedOperationGroups(ctx context.Context, groups []
 	if len(groups) == 0 {
 		return nil
 	}
-	workers := maxConcurrentSingleNodeOperations
+	if workers <= 0 {
+		workers = 1
+	}
 	if workers > len(groups) {
 		workers = len(groups)
 	}
@@ -619,6 +669,8 @@ func (c Controller) applyOperationWithConfigData(ctx context.Context, operation 
 	}
 	switch operation.OperationType {
 	case "sync_config", "add_user", "update_user", "remove_user", "disable_user", "enable_user":
+		unlock := c.lockNode(operation.NodeID.Int64)
+		defer unlock()
 		client, node, err := c.dial(ctx, operation.NodeID.Int64)
 		if err != nil {
 			if !isRuntimeUserOperation(operation.OperationType) {
