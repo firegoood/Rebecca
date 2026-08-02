@@ -1,9 +1,29 @@
 {
   "schema_version": 1,
   "project": "Rebecca",
-  "latest": "dev-a98eccb",
-  "updated_at": "2026-08-02T15:29:24Z",
+  "latest": "dev-dbba7b2",
+  "updated_at": "2026-08-02T17:26:53Z",
   "builds": [
+    {
+      "tag": "dev-dbba7b2",
+      "sha": "dbba7b2176045371f03099898d2a47e744cf1334",
+      "branch": "dev",
+      "workflow": "Binary Build",
+      "run_id": "30758744754",
+      "run_number": "661",
+      "created_at": "2026-08-02T17:26:53Z",
+      "release_tag": "dev-builds",
+      "assets": {
+        "linux-amd64": {
+          "name": "rebecca-linux-amd64-dev-dbba7b2.tar.gz",
+          "url": "https://github.com/rebeccapanel/Rebecca/releases/download/dev-builds/rebecca-linux-amd64-dev-dbba7b2.tar.gz"
+        },
+        "windows-amd64": {
+          "name": "rebecca-windows-amd64-dev-dbba7b2.zip",
+          "url": "https://github.com/rebeccapanel/Rebecca/releases/download/dev-builds/rebecca-windows-amd64-dev-dbba7b2.zip"
+        }
+      }
+    },
     {
       "tag": "dev-a98eccb",
       "sha": "a98eccb6fe8df7cddb872c8a06ef48035d445c2d",
@@ -981,25 +1001,6 @@
         "windows-amd64": {
           "name": "rebecca-windows-amd64-dev-7d10086.zip",
           "url": "https://github.com/rebeccapanel/Rebecca/releases/download/dev-builds/rebecca-windows-amd64-dev-7d10086.zip"
-        }
-      }
-    },
-    {
-      "tag": "dev-fd2464a",
-      "sha": "fd2464a6ee374c74a6498425b89d54baf409a6eb",
-      "branch": "dev",
-      "workflow": "Binary Build",
-      "run_id": "29944027609",
-      "run_number": "587",
-      "created_at": "2026-07-22T17:53:51Z",
-      "assets": {
-        "windows-amd64": {
-          "name": "rebecca-windows-amd64-dev-fd2464a.zip",
-          "url": "https://github.com/rebeccapanel/Rebecca/releases/download/dev-builds/rebecca-windows-amd64-dev-fd2464a.zip"
-        },
-        "linux-amd64": {
-          "name": "rebecca-linux-amd64-dev-fd2464a.tar.gz",
-          "url": "https://github.com/rebeccapanel/Rebecca/releases/download/dev-builds/rebecca-linux-amd64-dev-fd2464a.tar.gz"
         }
       }
     }
