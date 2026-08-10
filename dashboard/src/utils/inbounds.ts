@@ -37,6 +37,18 @@ export type RawInbound = {
 	sniffing?: Record<string, any>;
 	targets?: string[];
 	effective_targets?: string[];
+	uplink?: number;
+	downlink?: number;
+};
+
+export const getInboundTraffic = (inbound: RawInbound) => {
+	const normalize = (value: unknown) => {
+		const number = Number(value);
+		return Number.isFinite(number) && number > 0 ? number : 0;
+	};
+	const upload = normalize(inbound.uplink);
+	const download = normalize(inbound.downlink);
+	return { upload, download, total: upload + download };
 };
 
 type BuildInboundOptions = {
@@ -133,6 +145,7 @@ export type InboundFormValues = {
 	disableInsecureEncryption: boolean;
 	vlessDecryption: string;
 	vlessEncryption: string;
+	vlessFlow: "" | "xtls-rprx-vision";
 	fallbacks: FallbackForm[];
 
 	// shadowsocks
@@ -262,6 +275,20 @@ export type InboundFormValues = {
 	xhttpPaddingBytes: string;
 	xhttpNoSSEHeader: boolean;
 	xhttpNoGRPCHeader: boolean;
+	xhttpPaddingObfsMode: boolean;
+	xhttpPaddingKey: string;
+	xhttpPaddingHeader: string;
+	xhttpPaddingPlacement: "" | "queryInHeader" | "query" | "header" | "cookie";
+	xhttpPaddingMethod: "" | "repeat-x" | "tokenish";
+	xhttpUplinkHTTPMethod: string;
+	xhttpSessionPlacement: "" | "path" | "query" | "header" | "cookie";
+	xhttpSessionKey: string;
+	xhttpSeqPlacement: "" | "path" | "query" | "header" | "cookie";
+	xhttpSeqKey: string;
+	xhttpUplinkDataPlacement: "" | "auto" | "body" | "header" | "cookie";
+	xhttpUplinkDataKey: string;
+	xhttpUplinkChunkSize: string;
+	xhttpServerMaxHeaderBytes: string;
 
 	// vless extras
 	vlessSelectedAuth: string;
@@ -636,7 +663,11 @@ const validatePath = (value: string, label: string): string | null => {
 	return null;
 };
 
-const validateXPadding = (value: string, label: string): string | null => {
+const validateXPadding = (
+	value: string,
+	label: string,
+	requirePositive = false,
+): string | null => {
 	const cleaned = value.trim();
 	if (!cleaned) return null;
 	const match = cleaned.match(/^(\d+)(?:-(\d+))?$/);
@@ -645,6 +676,40 @@ const validateXPadding = (value: string, label: string): string | null => {
 	}
 	if (match[2] && Number(match[1]) > Number(match[2])) {
 		return `${label} range start must be less than or equal to end.`;
+	}
+	const bounds = match.slice(1).filter(Boolean).map(Number);
+	if (
+		bounds.some((bound) => !Number.isSafeInteger(bound) || bound > 2147483647)
+	) {
+		return `${label} must use 32-bit integer values.`;
+	}
+	if (requirePositive && bounds.some((bound) => bound <= 0)) {
+		return `${label} values must be greater than zero.`;
+	}
+	return null;
+};
+
+const validateHTTPToken = (value: string, label: string): string | null => {
+	const cleaned = value.trim();
+	if (!cleaned) return null;
+	if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(cleaned)) {
+		return `${label} must be a valid HTTP token without spaces or line breaks.`;
+	}
+	return null;
+};
+
+const validateNonNegativeInt32 = (
+	value: string,
+	label: string,
+): string | null => {
+	const cleaned = value.trim();
+	if (!cleaned) return null;
+	if (!/^\d+$/.test(cleaned)) {
+		return `${label} must be a non-negative integer.`;
+	}
+	const parsed = Number(cleaned);
+	if (!Number.isSafeInteger(parsed) || parsed > 2147483647) {
+		return `${label} must be a 32-bit integer.`;
 	}
 	return null;
 };
@@ -719,6 +784,7 @@ export const validateInboundFormFields = (
 		const paddingError = validateXPadding(
 			values.splithttpXPaddingBytes ?? "",
 			"SplitHTTP xPaddingBytes",
+			true,
 		);
 		if (paddingError) errors.splithttpXPaddingBytes = paddingError;
 	}
@@ -728,8 +794,88 @@ export const validateInboundFormFields = (
 		const paddingError = validateXPadding(
 			values.xhttpPaddingBytes ?? "",
 			"XHTTP xPaddingBytes",
+			true,
 		);
 		if (paddingError) errors.xhttpPaddingBytes = paddingError;
+
+		const mode = values.xhttpMode || "auto";
+		if (!["auto", "packet-up", "stream-up", "stream-one"].includes(mode)) {
+			errors.xhttpMode = "Unsupported XHTTP mode.";
+		}
+		if (
+			values.xhttpPaddingPlacement &&
+			!["queryInHeader", "query", "header", "cookie"].includes(
+				values.xhttpPaddingPlacement,
+			)
+		) {
+			errors.xhttpPaddingPlacement = "Unsupported padding placement.";
+		}
+		if (
+			values.xhttpPaddingMethod &&
+			!["repeat-x", "tokenish"].includes(values.xhttpPaddingMethod)
+		) {
+			errors.xhttpPaddingMethod = "Unsupported padding method.";
+		}
+		for (const [field, value, label] of [
+			["xhttpPaddingKey", values.xhttpPaddingKey, "Padding key"],
+			["xhttpPaddingHeader", values.xhttpPaddingHeader, "Padding header"],
+			[
+				"xhttpUplinkHTTPMethod",
+				values.xhttpUplinkHTTPMethod,
+				"Uplink HTTP method",
+			],
+			["xhttpSessionKey", values.xhttpSessionKey, "Session ID key"],
+			["xhttpSeqKey", values.xhttpSeqKey, "Sequence key"],
+			["xhttpUplinkDataKey", values.xhttpUplinkDataKey, "Uplink data key"],
+		] as const) {
+			const error = validateHTTPToken(value ?? "", label);
+			if (error) errors[field] = error;
+		}
+		if (
+			values.xhttpSessionPlacement &&
+			!["path", "query", "header", "cookie"].includes(
+				values.xhttpSessionPlacement,
+			)
+		) {
+			errors.xhttpSessionPlacement = "Unsupported session ID placement.";
+		}
+		if (
+			values.xhttpSeqPlacement &&
+			!["path", "query", "header", "cookie"].includes(values.xhttpSeqPlacement)
+		) {
+			errors.xhttpSeqPlacement = "Unsupported sequence placement.";
+		}
+		if (
+			values.xhttpUplinkDataPlacement &&
+			!["auto", "body", "header", "cookie"].includes(
+				values.xhttpUplinkDataPlacement,
+			)
+		) {
+			errors.xhttpUplinkDataPlacement = "Unsupported uplink data placement.";
+		}
+		if (
+			["header", "cookie"].includes(values.xhttpUplinkDataPlacement) &&
+			mode !== "packet-up"
+		) {
+			errors.xhttpUplinkDataPlacement =
+				"Header and cookie uplink data placement require packet-up mode.";
+		}
+		if (
+			values.xhttpUplinkHTTPMethod.trim().toUpperCase() === "GET" &&
+			mode !== "packet-up"
+		) {
+			errors.xhttpUplinkHTTPMethod = "GET requires packet-up mode.";
+		}
+		const chunkError = validateXPadding(
+			values.xhttpUplinkChunkSize ?? "",
+			"XHTTP uplinkChunkSize",
+		);
+		if (chunkError) errors.xhttpUplinkChunkSize = chunkError;
+		const maxHeaderError = validateNonNegativeInt32(
+			values.xhttpServerMaxHeaderBytes ?? "",
+			"XHTTP serverMaxHeaderBytes",
+		);
+		if (maxHeaderError) errors.xhttpServerMaxHeaderBytes = maxHeaderError;
 	}
 	if (values.protocol === "hysteria") {
 		if (values.streamNetwork !== "hysteria") {
@@ -1296,6 +1442,7 @@ export const createDefaultInboundForm = (
 	disableInsecureEncryption: true,
 	vlessDecryption: "none",
 	vlessEncryption: "",
+	vlessFlow: "",
 	fallbacks: [],
 	shadowsocksNetwork: "tcp,udp",
 	shadowsocksMethod: "chacha20-ietf-poly1305",
@@ -1405,6 +1552,20 @@ export const createDefaultInboundForm = (
 	xhttpPaddingBytes: "",
 	xhttpNoSSEHeader: false,
 	xhttpNoGRPCHeader: false,
+	xhttpPaddingObfsMode: false,
+	xhttpPaddingKey: "",
+	xhttpPaddingHeader: "",
+	xhttpPaddingPlacement: "",
+	xhttpPaddingMethod: "",
+	xhttpUplinkHTTPMethod: "",
+	xhttpSessionPlacement: "",
+	xhttpSessionKey: "",
+	xhttpSeqPlacement: "",
+	xhttpSeqKey: "",
+	xhttpUplinkDataPlacement: "",
+	xhttpUplinkDataKey: "",
+	xhttpUplinkChunkSize: "",
+	xhttpServerMaxHeaderBytes: "",
 	vlessSelectedAuth: "",
 	sockoptEnabled: false,
 	sockopt: createDefaultSockopt(),
@@ -1669,6 +1830,10 @@ export const rawInboundToFormValues = (raw: RawInbound): InboundFormValues => {
 					fallbackToForm(item),
 				)
 			: base.fallbacks,
+		vlessFlow:
+			settings.flow === "xtls-rprx-vision"
+				? settings.flow
+				: base.vlessFlow,
 		shadowsocksNetwork:
 			settings.network && ["tcp", "udp", "tcp,udp"].includes(settings.network)
 				? (settings.network as InboundFormValues["shadowsocksNetwork"])
@@ -1969,6 +2134,40 @@ export const rawInboundToFormValues = (raw: RawInbound): InboundFormValues => {
 		xhttpNoGRPCHeader: Boolean(
 			stream?.xhttpSettings?.noGRPCHeader ?? base.xhttpNoGRPCHeader,
 		),
+		xhttpPaddingObfsMode: Boolean(
+			stream?.xhttpSettings?.xPaddingObfsMode ?? base.xhttpPaddingObfsMode,
+		),
+		xhttpPaddingKey: stream?.xhttpSettings?.xPaddingKey ?? base.xhttpPaddingKey,
+		xhttpPaddingHeader:
+			stream?.xhttpSettings?.xPaddingHeader ?? base.xhttpPaddingHeader,
+		xhttpPaddingPlacement:
+			stream?.xhttpSettings?.xPaddingPlacement ?? base.xhttpPaddingPlacement,
+		xhttpPaddingMethod:
+			stream?.xhttpSettings?.xPaddingMethod ?? base.xhttpPaddingMethod,
+		xhttpUplinkHTTPMethod:
+			stream?.xhttpSettings?.uplinkHTTPMethod ?? base.xhttpUplinkHTTPMethod,
+		xhttpSessionPlacement:
+			stream?.xhttpSettings?.sessionIDPlacement ??
+			stream?.xhttpSettings?.sessionPlacement ??
+			base.xhttpSessionPlacement,
+		xhttpSessionKey:
+			stream?.xhttpSettings?.sessionIDKey ??
+			stream?.xhttpSettings?.sessionKey ??
+			base.xhttpSessionKey,
+		xhttpSeqPlacement:
+			stream?.xhttpSettings?.seqPlacement ?? base.xhttpSeqPlacement,
+		xhttpSeqKey: stream?.xhttpSettings?.seqKey ?? base.xhttpSeqKey,
+		xhttpUplinkDataPlacement:
+			stream?.xhttpSettings?.uplinkDataPlacement ??
+			base.xhttpUplinkDataPlacement,
+		xhttpUplinkDataKey:
+			stream?.xhttpSettings?.uplinkDataKey ?? base.xhttpUplinkDataKey,
+		xhttpUplinkChunkSize:
+			stream?.xhttpSettings?.uplinkChunkSize?.toString() ??
+			base.xhttpUplinkChunkSize,
+		xhttpServerMaxHeaderBytes:
+			stream?.xhttpSettings?.serverMaxHeaderBytes?.toString() ??
+			base.xhttpServerMaxHeaderBytes,
 		vlessSelectedAuth: settings.selectedAuth ?? base.vlessSelectedAuth,
 		sockoptEnabled: Boolean(stream?.sockopt),
 		sockopt: (() => {
@@ -2915,6 +3114,118 @@ const buildStreamSettings = (
 			])
 				? mode
 				: undefined,
+			xPaddingObfsMode: shouldIncludeValue(
+				values.xhttpPaddingObfsMode,
+				defaults.xhttpPaddingObfsMode,
+				initial,
+				["streamSettings", "xhttpSettings", "xPaddingObfsMode"],
+			)
+				? values.xhttpPaddingObfsMode || undefined
+				: undefined,
+			xPaddingKey: shouldIncludeValue(
+				values.xhttpPaddingKey,
+				defaults.xhttpPaddingKey,
+				initial,
+				["streamSettings", "xhttpSettings", "xPaddingKey"],
+			)
+				? values.xhttpPaddingKey?.trim() || undefined
+				: undefined,
+			xPaddingHeader: shouldIncludeValue(
+				values.xhttpPaddingHeader,
+				defaults.xhttpPaddingHeader,
+				initial,
+				["streamSettings", "xhttpSettings", "xPaddingHeader"],
+			)
+				? values.xhttpPaddingHeader?.trim() || undefined
+				: undefined,
+			xPaddingPlacement: shouldIncludeValue(
+				values.xhttpPaddingPlacement,
+				defaults.xhttpPaddingPlacement,
+				initial,
+				["streamSettings", "xhttpSettings", "xPaddingPlacement"],
+			)
+				? values.xhttpPaddingPlacement?.trim() || undefined
+				: undefined,
+			xPaddingMethod: shouldIncludeValue(
+				values.xhttpPaddingMethod,
+				defaults.xhttpPaddingMethod,
+				initial,
+				["streamSettings", "xhttpSettings", "xPaddingMethod"],
+			)
+				? values.xhttpPaddingMethod?.trim() || undefined
+				: undefined,
+			uplinkHTTPMethod: shouldIncludeValue(
+				values.xhttpUplinkHTTPMethod,
+				defaults.xhttpUplinkHTTPMethod,
+				initial,
+				["streamSettings", "xhttpSettings", "uplinkHTTPMethod"],
+			)
+				? values.xhttpUplinkHTTPMethod?.trim() || undefined
+				: undefined,
+			sessionIDPlacement: shouldIncludeValue(
+				values.xhttpSessionPlacement,
+				defaults.xhttpSessionPlacement,
+				initial,
+				["streamSettings", "xhttpSettings", "sessionIDPlacement"],
+			)
+				? values.xhttpSessionPlacement?.trim() || undefined
+				: undefined,
+			sessionIDKey: shouldIncludeValue(
+				values.xhttpSessionKey,
+				defaults.xhttpSessionKey,
+				initial,
+				["streamSettings", "xhttpSettings", "sessionIDKey"],
+			)
+				? values.xhttpSessionKey?.trim() || undefined
+				: undefined,
+			seqPlacement: shouldIncludeValue(
+				values.xhttpSeqPlacement,
+				defaults.xhttpSeqPlacement,
+				initial,
+				["streamSettings", "xhttpSettings", "seqPlacement"],
+			)
+				? values.xhttpSeqPlacement?.trim() || undefined
+				: undefined,
+			seqKey: shouldIncludeValue(
+				values.xhttpSeqKey,
+				defaults.xhttpSeqKey,
+				initial,
+				["streamSettings", "xhttpSettings", "seqKey"],
+			)
+				? values.xhttpSeqKey?.trim() || undefined
+				: undefined,
+			uplinkDataPlacement: shouldIncludeValue(
+				values.xhttpUplinkDataPlacement,
+				defaults.xhttpUplinkDataPlacement,
+				initial,
+				["streamSettings", "xhttpSettings", "uplinkDataPlacement"],
+			)
+				? values.xhttpUplinkDataPlacement?.trim() || undefined
+				: undefined,
+			uplinkDataKey: shouldIncludeValue(
+				values.xhttpUplinkDataKey,
+				defaults.xhttpUplinkDataKey,
+				initial,
+				["streamSettings", "xhttpSettings", "uplinkDataKey"],
+			)
+				? values.xhttpUplinkDataKey?.trim() || undefined
+				: undefined,
+			uplinkChunkSize: shouldIncludeValue(
+				values.xhttpUplinkChunkSize,
+				defaults.xhttpUplinkChunkSize,
+				initial,
+				["streamSettings", "xhttpSettings", "uplinkChunkSize"],
+			)
+				? values.xhttpUplinkChunkSize?.trim() || undefined
+				: undefined,
+			serverMaxHeaderBytes: shouldIncludeValue(
+				values.xhttpServerMaxHeaderBytes,
+				defaults.xhttpServerMaxHeaderBytes,
+				initial,
+				["streamSettings", "xhttpSettings", "serverMaxHeaderBytes"],
+			)
+				? parseOptionalNumber(values.xhttpServerMaxHeaderBytes)
+				: undefined,
 		});
 		if (Object.keys(xhttpSettings).length) {
 			stream.xhttpSettings = xhttpSettings;
@@ -3120,6 +3431,9 @@ const buildSettings = (values: InboundFormValues): Record<string, any> => {
 			}
 			if (values.vlessSelectedAuth) {
 				base.selectedAuth = values.vlessSelectedAuth;
+			}
+			if (values.vlessFlow) {
+				base.flow = values.vlessFlow;
 			}
 			if (values.fallbacks.length) {
 				base.fallbacks = values.fallbacks

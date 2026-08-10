@@ -5,12 +5,27 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
 
 	adminapp "github.com/rebeccapanel/rebecca/internal/app/admin"
 )
+
+func TestRetryHostModificationAfterDeadlock(t *testing.T) {
+	attempts := 0
+	hosts, err := retryHostModification(context.Background(), func() (map[string][]hostResponse, error) {
+		attempts++
+		if attempts < 3 {
+			return nil, errors.New("Error 1213 (40001): Deadlock found when trying to get lock; try restarting transaction")
+		}
+		return map[string][]hostResponse{"in": nil}, nil
+	})
+	if err != nil || attempts != 3 || hosts == nil {
+		t.Fatalf("attempts=%d hosts=%v err=%v", attempts, hosts, err)
+	}
+}
 
 func TestHostsListCreatesDefaultHosts(t *testing.T) {
 	server, db := testAdminServer(t)
@@ -175,7 +190,7 @@ func TestHostsBulkModifyMoveDisableAndEnqueue(t *testing.T) {
 	assertMasterAPICount(t, db, `SELECT COUNT(*) FROM hosts WHERE inbound_tag = 'info'`, 2)
 }
 
-func TestHostsBulkModifySubscriptionChangeEnqueuesRuntimeSync(t *testing.T) {
+func TestHostsBulkModifySubscriptionOnlyChangeDoesNotEnqueueRuntimeSync(t *testing.T) {
 	server, db := testAdminServer(t)
 	insertMasterAPIAdmin(t, db, 1, "pouria", "pass123", adminapp.RoleFullAccess, adminapp.StatusActive)
 	insertRawMasterXrayConfig(t, db, inboundConfig(inboundEntry("cdn", "vless", 443)))
@@ -206,7 +221,7 @@ func TestHostsBulkModifySubscriptionChangeEnqueuesRuntimeSync(t *testing.T) {
 		t.Fatalf("hosts update status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	assertMasterAPICount(t, db, `SELECT COUNT(*) FROM service_hosts WHERE service_id = 10 AND host_id = `+itoa(hostID), 1)
-	assertMasterAPICount(t, db, `SELECT COUNT(*) FROM node_operations WHERE operation_type = 'sync_config'`, 1)
+	assertMasterAPICount(t, db, `SELECT COUNT(*) FROM node_operations WHERE operation_type = 'sync_config'`, 0)
 }
 
 func TestWireGuardHostDNSPersists(t *testing.T) {
@@ -248,7 +263,7 @@ func TestWireGuardHostDNSPersists(t *testing.T) {
 	}
 }
 
-func TestHostsBulkModifyDeletingDuplicateInboundHostEnqueuesRuntimeSync(t *testing.T) {
+func TestHostsBulkModifyDeletingDuplicateInboundHostDoesNotEnqueueRuntimeSync(t *testing.T) {
 	server, db := testAdminServer(t)
 	insertMasterAPIAdmin(t, db, 1, "pouria", "pass123", adminapp.RoleFullAccess, adminapp.StatusActive)
 	insertRawMasterXrayConfig(t, db, inboundConfig(inboundEntry("cdn", "vless", 443)))
@@ -283,7 +298,7 @@ func TestHostsBulkModifyDeletingDuplicateInboundHostEnqueuesRuntimeSync(t *testi
 	}
 	assertMasterAPICount(t, db, `SELECT COUNT(*) FROM hosts WHERE id = 55`, 0)
 	assertMasterAPICount(t, db, `SELECT COUNT(*) FROM service_hosts WHERE service_id = 10 AND host_id = `+itoa(firstHostID), 1)
-	assertMasterAPICount(t, db, `SELECT COUNT(*) FROM node_operations WHERE operation_type = 'sync_config'`, 1)
+	assertMasterAPICount(t, db, `SELECT COUNT(*) FROM node_operations`, 0)
 }
 
 func TestHostsRejectUnknownInbound(t *testing.T) {
