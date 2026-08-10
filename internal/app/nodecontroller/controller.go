@@ -183,12 +183,14 @@ func (c Controller) Health(ctx context.Context, req Request) (RuntimeResult, err
 func (c Controller) Metrics(ctx context.Context, req Request) (RuntimeResult, error) {
 	client, node, err := c.dial(ctx, req.NodeID)
 	if err != nil {
+		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
 		return RuntimeResult{}, friendlyNodeError("metrics", req.NodeID, err)
 	}
 	defer client.Close()
 
 	res, err := client.Runtime().Metrics(ctx, &nodev1.MetricsRequest{IncludeRuntime: true})
 	if err != nil {
+		_ = c.repo.SetError(ctx, req.NodeID, err.Error())
 		return RuntimeResult{}, friendlyNodeError("metrics", req.NodeID, err)
 	}
 	result := runtimeResult(node, res.GetRuntime(), res)
@@ -215,6 +217,40 @@ func (c Controller) RecoverNodes(ctx context.Context, req RecoverNodesRequest) (
 		}
 		result.Recovered++
 	}
+	return result, nil
+}
+
+func (c Controller) CheckConnectedNodes(ctx context.Context) (HealthCheckNodesResult, error) {
+	nodeIDs, err := c.repo.ConnectedNodeIDs(ctx)
+	if err != nil {
+		return HealthCheckNodesResult{}, err
+	}
+	result := HealthCheckNodesResult{Checked: len(nodeIDs)}
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	sem := make(chan struct{}, 8)
+	for _, nodeID := range nodeIDs {
+		wg.Add(1)
+		go func(nodeID int64) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+			metricsCtx, cancel := withListMetricsTimeout(ctx)
+			_, err := c.Metrics(metricsCtx, Request{NodeID: nodeID})
+			cancel()
+			if err == nil {
+				return
+			}
+			mu.Lock()
+			result.Errors = append(result.Errors, fmt.Sprintf("node %d: %v", nodeID, err))
+			mu.Unlock()
+		}(nodeID)
+	}
+	wg.Wait()
 	return result, nil
 }
 
