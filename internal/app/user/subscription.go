@@ -62,7 +62,7 @@ type subscriptionTokenPayload struct {
 
 var subscriptionClientConfigs = map[string]SubscriptionClientConfig{
 	"clash-meta":   {Format: "clash-meta", Media: "text/yaml"},
-	"sing-box":     {Format: "sing-box", Media: "application/json"},
+	"sing-box":     {Format: "sing-box", Media: "application/json", TemplateKey: "singbox_subscription_template"},
 	"clash":        {Format: "clash", Media: "text/yaml"},
 	"v2ray":        {Format: "v2ray", Media: "text/plain", Base64: true},
 	"outline":      {Format: "outline", Media: "application/json"},
@@ -412,7 +412,7 @@ func (s Service) generateSubscriptionConfig(ctx context.Context, user UserDetail
 	if err != nil {
 		return "", err
 	}
-	raw := links.Links
+	raw := connectableSubscriptionLinks(links.Links)
 	switch config.Format {
 	case "v2ray":
 		content := strings.Join(raw, "\n")
@@ -432,12 +432,29 @@ func (s Service) generateSubscriptionConfig(ctx context.Context, user UserDetail
 		templateKey := firstNonEmptyString(config.TemplateKey, "v2ray_subscription_template")
 		return renderV2RayJSONSubscriptionWithTemplate(raw, false, s.subscriptionTemplateContent(ctx, templateKey, user.AdminID))
 	case "sing-box":
-		return renderSingBoxJSON(raw)
+		templateKey := firstNonEmptyString(config.TemplateKey, "singbox_subscription_template")
+		return renderSingBoxJSONWithTemplate(
+			raw,
+			s.subscriptionTemplateContent(ctx, templateKey, user.AdminID),
+			s.subscriptionTemplateContent(ctx, "singbox_settings_template", user.AdminID),
+		)
 	case "clash", "clash-meta":
 		return renderClashLikeYAML(user.Username, raw, config.Format == "clash-meta")
 	default:
 		return "", clientError(404, "Unsupported client type")
 	}
+}
+
+func connectableSubscriptionLinks(links []string) []string {
+	filtered := make([]string, 0, len(links))
+	for _, link := range links {
+		parsed, err := parseSubscriptionShareURL(link)
+		if err == nil && strings.EqualFold(parsed.Hostname(), "x") {
+			continue
+		}
+		filtered = append(filtered, link)
+	}
+	return filtered
 }
 
 func (s Service) subscriptionTemplateContent(ctx context.Context, templateKey string, adminID *int64) string {
@@ -963,10 +980,39 @@ func renderClashLikeYAML(username string, links []string, meta bool) (string, er
 }
 
 func renderSingBoxJSON(links []string) (string, error) {
+	return renderSingBoxJSONWithTemplate(links, `{"outbounds":[]}`, "")
+}
+
+func renderSingBoxJSONWithTemplate(links []string, templateContent string, settingsContent string) (string, error) {
+	config, err := singBoxSubscriptionTemplate(templateContent)
+	if err != nil {
+		return "", err
+	}
+	settings, err := singBoxSettingsTemplate(settingsContent)
+	if err != nil {
+		return "", err
+	}
+	templateOutbounds, err := singBoxTemplateOutbounds(config)
+	if err != nil {
+		return "", err
+	}
+	migrateLegacySingBoxTemplate(config)
+	templateOutbounds, err = singBoxTemplateOutbounds(config)
+	if err != nil {
+		return "", err
+	}
+	usedTags := make(map[string]struct{}, len(templateOutbounds)+len(links))
+	for _, raw := range templateOutbounds {
+		if outbound, ok := raw.(map[string]any); ok {
+			if tag := strings.TrimSpace(stringValue(outbound["tag"])); tag != "" {
+				usedTags[tag] = struct{}{}
+			}
+		}
+	}
+
 	proxies := make([]map[string]any, 0, len(links))
 	tags := make([]string, 0, len(links))
 	for i, link := range links {
-		tag := fmt.Sprintf("proxy-%d", i+1)
 		parsed, parseErr := parseSubscriptionShareURL(link)
 		scheme, knownScheme := supportedSubscriptionScheme(link, parsed)
 		if parseErr != nil && knownScheme {
@@ -987,6 +1033,16 @@ func renderSingBoxJSON(links []string) (string, error) {
 		if _, isXHTTP := shareLinkXHTTPExtra(link, parsed); isXHTTP {
 			return "", fmt.Errorf("sing-box does not support XHTTP transport; use raw, Xray JSON, or Mihomo output")
 		}
+		// sing-box has no equivalent for Xray RAW/TCP HTTP header
+		// obfuscation. Mapping it to the V2Ray HTTP transport produces a valid
+		// looking configuration that cannot connect, so omit only those links.
+		if parseErr == nil && singBoxUsesRawHTTPHeaderObfuscation(link, parsed) {
+			continue
+		}
+		if !knownScheme {
+			continue
+		}
+		tag := uniqueSingBoxTag(singBoxShareLinkName(link, parsed), i+1, usedTags)
 		outbound, ok := singBoxOutboundFromShareLink(link, tag)
 		if !ok {
 			if knownScheme {
@@ -994,20 +1050,347 @@ func renderSingBoxJSON(links []string) (string, error) {
 			}
 			continue
 		}
+		applySingBoxTransportSettings(outbound, settings)
 		proxies = append(proxies, outbound)
 		tags = append(tags, tag)
 	}
-	outbounds := make([]map[string]any, 0, len(proxies)+1)
-	if len(tags) > 0 {
-		outbounds = append(outbounds, map[string]any{
-			"type":      "selector",
-			"tag":       "proxy",
-			"outbounds": tags,
-		})
+	templateOutbounds = configureSingBoxGroups(templateOutbounds, tags)
+	for _, proxy := range proxies {
+		templateOutbounds = append(templateOutbounds, proxy)
 	}
-	outbounds = append(outbounds, proxies...)
-	return marshalPretty(map[string]any{"outbounds": outbounds})
+	config["outbounds"] = templateOutbounds
+	return marshalPretty(config)
 }
+
+func singBoxSubscriptionTemplate(content string) (map[string]any, error) {
+	if strings.TrimSpace(content) == "" {
+		content = fallbackSingBoxSubscriptionTemplate
+	}
+	config := map[string]any{}
+	if err := json.Unmarshal([]byte(content), &config); err != nil {
+		return nil, fmt.Errorf("invalid sing-box subscription template: %w", err)
+	}
+	return config, nil
+}
+
+func migrateLegacySingBoxTemplate(config map[string]any) {
+	dns, _ := config["dns"].(map[string]any)
+	defaultDomainResolver := ""
+	if dns != nil {
+		servers := listAny(dns["servers"])
+		for _, raw := range servers {
+			server, ok := raw.(map[string]any)
+			if !ok || strings.TrimSpace(stringValue(server["type"])) != "" {
+				continue
+			}
+			migrateLegacySingBoxDNSServer(server)
+			if defaultDomainResolver == "" && strings.EqualFold(stringValue(server["type"]), "local") {
+				defaultDomainResolver = strings.TrimSpace(stringValue(server["tag"]))
+			}
+		}
+		dnsRules := make([]any, 0, len(listAny(dns["rules"])))
+		for _, raw := range listAny(dns["rules"]) {
+			rule, ok := raw.(map[string]any)
+			if ok && strings.EqualFold(stringValue(rule["outbound"]), "any") {
+				if resolver := strings.TrimSpace(stringValue(rule["server"])); resolver != "" {
+					defaultDomainResolver = resolver
+					continue
+				}
+			}
+			dnsRules = append(dnsRules, raw)
+		}
+		dns["rules"] = dnsRules
+	}
+
+	dnsOutbounds := map[string]struct{}{}
+	outbounds := make([]any, 0, len(listAny(config["outbounds"])))
+	for _, raw := range listAny(config["outbounds"]) {
+		outbound, ok := raw.(map[string]any)
+		if ok && strings.EqualFold(stringValue(outbound["type"]), "dns") {
+			if tag := strings.TrimSpace(stringValue(outbound["tag"])); tag != "" {
+				dnsOutbounds[tag] = struct{}{}
+			}
+			continue
+		}
+		outbounds = append(outbounds, raw)
+	}
+	config["outbounds"] = outbounds
+
+	route, _ := config["route"].(map[string]any)
+	if route == nil {
+		route = map[string]any{}
+		config["route"] = route
+	}
+	if strings.TrimSpace(stringValue(route["default_domain_resolver"])) == "" && defaultDomainResolver != "" {
+		route["default_domain_resolver"] = defaultDomainResolver
+	}
+	actions := make([]any, 0)
+	for _, raw := range listAny(config["inbounds"]) {
+		inbound, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		match := map[string]any{}
+		if tag := strings.TrimSpace(stringValue(inbound["tag"])); tag != "" {
+			match["inbound"] = tag
+		}
+		if strategy := strings.TrimSpace(stringValue(inbound["domain_strategy"])); strategy != "" {
+			action := cloneJSONMap(match)
+			action["action"] = "resolve"
+			action["strategy"] = strategy
+			actions = append(actions, action)
+		}
+		delete(inbound, "domain_strategy")
+		if truthy(inbound["sniff"]) {
+			action := cloneJSONMap(match)
+			action["action"] = "sniff"
+			if truthy(inbound["sniff_override_destination"]) {
+				action["override_destination"] = true
+			}
+			if timeout := strings.TrimSpace(stringValue(inbound["sniff_timeout"])); timeout != "" {
+				action["timeout"] = timeout
+			}
+			actions = append(actions, action)
+		}
+		delete(inbound, "sniff")
+		delete(inbound, "sniff_override_destination")
+		delete(inbound, "sniff_timeout")
+	}
+
+	rules := listAny(route["rules"])
+	for _, raw := range rules {
+		rule, ok := raw.(map[string]any)
+		if !ok || strings.TrimSpace(stringValue(rule["action"])) != "" {
+			continue
+		}
+		outbound := strings.TrimSpace(stringValue(rule["outbound"]))
+		_, targetsLegacyDNS := dnsOutbounds[outbound]
+		if targetsLegacyDNS || (strings.EqualFold(stringValue(rule["protocol"]), "dns") && outbound == "") {
+			delete(rule, "outbound")
+			rule["action"] = "hijack-dns"
+			continue
+		}
+		if outbound != "" {
+			rule["action"] = "route"
+		}
+	}
+	route["rules"] = append(actions, rules...)
+}
+
+func migrateLegacySingBoxDNSServer(server map[string]any) {
+	address := strings.TrimSpace(stringValue(server["address"]))
+	if address == "" {
+		return
+	}
+	if resolver := server["address_resolver"]; resolver != nil {
+		server["domain_resolver"] = resolver
+		delete(server, "address_resolver")
+	}
+	if strategy := server["address_strategy"]; strategy != nil {
+		server["domain_strategy"] = strategy
+		delete(server, "address_strategy")
+	}
+	delete(server, "address")
+	if strings.EqualFold(address, "local") {
+		server["type"] = "local"
+		return
+	}
+	if !strings.Contains(address, "://") {
+		server["type"] = "udp"
+		server["server"] = address
+		return
+	}
+	parsed, err := url.Parse(address)
+	if err != nil {
+		server["address"] = address
+		return
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme == "dhcp" {
+		server["type"] = "dhcp"
+		if name := strings.TrimSpace(parsed.Host); name != "" && !strings.EqualFold(name, "auto") {
+			server["interface"] = name
+		}
+		return
+	}
+	supported := map[string]string{"tcp": "tcp", "udp": "udp", "tls": "tls", "https": "https", "quic": "quic", "h3": "h3"}
+	serverType, ok := supported[scheme]
+	if !ok || parsed.Hostname() == "" {
+		server["address"] = address
+		return
+	}
+	server["type"] = serverType
+	server["server"] = parsed.Hostname()
+	if port, err := strconv.Atoi(parsed.Port()); err == nil && port > 0 {
+		server["server_port"] = port
+	}
+	if (serverType == "https" || serverType == "h3") && parsed.EscapedPath() != "" && parsed.EscapedPath() != "/" {
+		server["path"] = parsed.EscapedPath()
+	}
+}
+
+func singBoxSettingsTemplate(content string) (map[string]any, error) {
+	if strings.TrimSpace(content) == "" {
+		return map[string]any{}, nil
+	}
+	settings := map[string]any{}
+	if err := json.Unmarshal([]byte(content), &settings); err != nil {
+		return nil, fmt.Errorf("invalid sing-box settings template: %w", err)
+	}
+	return settings, nil
+}
+
+func singBoxTemplateOutbounds(config map[string]any) ([]any, error) {
+	raw, exists := config["outbounds"]
+	if !exists || raw == nil {
+		return []any{}, nil
+	}
+	outbounds, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("invalid sing-box subscription template: outbounds must be an array")
+	}
+	return outbounds, nil
+}
+
+func singBoxShareLinkName(link string, parsed *url.URL) string {
+	if parsed != nil && parsed.Scheme != "vmess" {
+		return strings.TrimSpace(parsed.Fragment)
+	}
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(link)), "vmess://") {
+		return ""
+	}
+	decoded, err := decodeFlexibleBase64(strings.TrimPrefix(strings.TrimSpace(link), "vmess://"))
+	if err != nil {
+		return ""
+	}
+	payload := map[string]any{}
+	if json.Unmarshal(decoded, &payload) != nil {
+		return ""
+	}
+	return strings.TrimSpace(stringValue(payload["ps"]))
+}
+
+func uniqueSingBoxTag(name string, index int, used map[string]struct{}) string {
+	base := strings.TrimSpace(name)
+	if base == "" {
+		base = fmt.Sprintf("proxy-%d", index)
+	}
+	if _, exists := used[base]; !exists {
+		used[base] = struct{}{}
+		return base
+	}
+	for suffix := 2; ; suffix++ {
+		candidate := fmt.Sprintf("%s (%d)", base, suffix)
+		if _, exists := used[candidate]; !exists {
+			used[candidate] = struct{}{}
+			return candidate
+		}
+	}
+}
+
+func configureSingBoxGroups(outbounds []any, proxyTags []string) []any {
+	urlTestTags := make([]string, 0, len(outbounds))
+	hasSelector := false
+	for _, raw := range outbounds {
+		outbound, ok := raw.(map[string]any)
+		if !ok || stringValue(outbound["type"]) != "urltest" {
+			continue
+		}
+		outbound["outbounds"] = append([]string(nil), proxyTags...)
+		if tag := strings.TrimSpace(stringValue(outbound["tag"])); tag != "" {
+			urlTestTags = append(urlTestTags, tag)
+		}
+	}
+	selectorTags := append(urlTestTags, proxyTags...)
+	for _, raw := range outbounds {
+		outbound, ok := raw.(map[string]any)
+		if !ok || stringValue(outbound["type"]) != "selector" || stringValue(outbound["tag"]) != "proxy" {
+			continue
+		}
+		outbound["outbounds"] = append([]string(nil), selectorTags...)
+		hasSelector = true
+	}
+	if !hasSelector && len(proxyTags) > 0 {
+		selector := map[string]any{"type": "selector", "tag": "proxy", "outbounds": selectorTags}
+		outbounds = append([]any{selector}, outbounds...)
+	}
+	return outbounds
+}
+
+func applySingBoxTransportSettings(outbound map[string]any, settings map[string]any) {
+	transport, ok := outbound["transport"].(map[string]any)
+	if !ok {
+		return
+	}
+	settingsKey := map[string]string{
+		"grpc":        "grpcSettings",
+		"http":        "httpSettings",
+		"ws":          "wsSettings",
+		"httpupgrade": "httpupgradeSettings",
+	}[stringValue(transport["type"])]
+	defaults, ok := settings[settingsKey].(map[string]any)
+	if !ok {
+		return
+	}
+	outbound["transport"] = mergeSingBoxObjects(defaults, transport)
+}
+
+func mergeSingBoxObjects(base map[string]any, override map[string]any) map[string]any {
+	merged := make(map[string]any, len(base)+len(override))
+	for key, value := range base {
+		if nested, ok := value.(map[string]any); ok {
+			merged[key] = mergeSingBoxObjects(nested, map[string]any{})
+		} else {
+			merged[key] = value
+		}
+	}
+	for key, value := range override {
+		baseNested, baseOK := merged[key].(map[string]any)
+		overrideNested, overrideOK := value.(map[string]any)
+		if baseOK && overrideOK {
+			merged[key] = mergeSingBoxObjects(baseNested, overrideNested)
+		} else {
+			merged[key] = value
+		}
+	}
+	return merged
+}
+
+const fallbackSingBoxSubscriptionTemplate = `{
+  "log": {"level": "warn"},
+  "dns": {
+    "servers": [
+      {"type": "udp", "tag": "dns-remote", "server": "1.1.1.2", "server_port": 53, "detour": "proxy"},
+      {"type": "local", "tag": "dns-local"}
+    ],
+    "final": "dns-remote",
+    "strategy": "prefer_ipv4"
+  },
+  "inbounds": [{
+    "type": "tun",
+    "tag": "tun-in",
+    "interface_name": "sing-tun",
+    "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
+    "auto_route": true,
+    "route_exclude_address": ["192.168.0.0/16", "fc00::/7"]
+  }],
+  "outbounds": [
+    {"type": "selector", "tag": "proxy", "outbounds": null, "interrupt_exist_connections": true},
+    {"type": "urltest", "tag": "Best Latency", "outbounds": null},
+    {"type": "direct", "tag": "direct"}
+  ],
+  "route": {
+    "rules": [
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"ip_is_private": true, "action": "route", "outbound": "direct"}
+    ],
+    "final": "proxy",
+    "auto_detect_interface": true,
+    "default_domain_resolver": "dns-local"
+  },
+  "experimental": {"cache_file": {"enabled": true}}
+}`
 
 func singBoxOutboundFromShareLink(link string, tag string) (map[string]any, bool) {
 	parsed, err := parseSubscriptionShareURL(link)
@@ -1240,17 +1623,7 @@ func singBoxTransport(query url.Values) (map[string]any, bool) {
 	}
 	switch network {
 	case "tcp":
-		if query.Get("headerType") != "http" {
-			return nil, true
-		}
-		transport := map[string]any{"type": "http"}
-		if hosts := stringList(query.Get("host")); len(hosts) > 0 {
-			transport["host"] = hosts
-		}
-		if path := query.Get("path"); path != "" {
-			transport["path"] = path
-		}
-		return transport, true
+		return nil, query.Get("headerType") != "http"
 	case "ws":
 		transport := map[string]any{"type": "ws"}
 		if path := query.Get("path"); path != "" {
@@ -1282,6 +1655,26 @@ func singBoxTransport(query url.Values) (map[string]any, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func singBoxUsesRawHTTPHeaderObfuscation(link string, parsed *url.URL) bool {
+	query := parsed.Query()
+	if parsed.Scheme == "vmess" {
+		decoded, err := decodeFlexibleBase64(strings.TrimPrefix(strings.TrimSpace(link), "vmess://"))
+		if err != nil {
+			return false
+		}
+		payload := map[string]any{}
+		if json.Unmarshal(decoded, &payload) != nil {
+			return false
+		}
+		query = url.Values{
+			"type":       []string{firstNonEmptyString(payload["net"], "tcp")},
+			"headerType": []string{stringValue(payload["type"])},
+		}
+	}
+	network := firstNonEmptyString(query.Get("type"), "tcp")
+	return (network == "tcp" || network == "raw") && query.Get("headerType") == "http"
 }
 
 func singBoxTLS(query url.Values) map[string]any {
@@ -1434,8 +1827,8 @@ func singBoxTLSCompatibilityError(link string, parsed *url.URL) error {
 			return fmt.Errorf("sing-box requires ECHConfigList as valid base64; dynamic Xray ECH forms such as domain+https://... cannot be represented safely")
 		}
 	}
-	if query.Get("security") == "reality" && (query.Get("spx") != "" || query.Get("pqv") != "") {
-		return fmt.Errorf("sing-box Reality cannot represent Xray spider-x or ML-DSA verifier fields safely")
+	if query.Get("security") == "reality" && query.Get("pqv") != "" {
+		return fmt.Errorf("sing-box Reality cannot represent Xray ML-DSA verifier fields safely")
 	}
 	return nil
 }
@@ -2096,6 +2489,7 @@ func v2rayStreamSettings(query url.Values) map[string]any {
 		if extra := query.Get("extra"); extra != "" {
 			extraSettings := map[string]any{}
 			if err := json.Unmarshal([]byte(extra), &extraSettings); err == nil {
+				extraMap := map[string]any{}
 				for _, key := range []string{
 					"scMaxEachPostBytes", "scMinPostsIntervalMs",
 					"xPaddingBytes", "noGRPCHeader", "keepAlivePeriod", "xmux",
@@ -2104,16 +2498,20 @@ func v2rayStreamSettings(query url.Values) map[string]any {
 					"uplinkDataPlacement", "uplinkDataKey", "uplinkChunkSize", "downloadSettings",
 				} {
 					if value, ok := extraSettings[key]; ok {
-						settings[key] = value
+						extraMap[key] = value
 					}
 				}
 				if headers := xhttpShareHeaders(extraSettings["headers"]); len(headers) > 0 {
-					settings["headers"] = headers
+					extraMap["headers"] = headers
 				}
-				copyOptionalAlias(settings, "sessionPlacement", extraSettings, "sessionIDPlacement")
-				copyOptionalAlias(settings, "sessionKey", extraSettings, "sessionIDKey")
-				copyOptionalAlias(settings, "sessionTable", extraSettings, "sessionIDTable")
-				copyOptionalAlias(settings, "sessionLength", extraSettings, "sessionIDLength")
+				copyOptionalAlias(extraMap, "sessionPlacement", extraSettings, "sessionIDPlacement")
+				copyOptionalAlias(extraMap, "sessionKey", extraSettings, "sessionIDKey")
+				copyOptionalAlias(extraMap, "sessionTable", extraSettings, "sessionIDTable")
+				copyOptionalAlias(extraMap, "sessionLength", extraSettings, "sessionIDLength")
+
+				if len(extraMap) > 0 {
+					settings["extra"] = extraMap
+				}
 			}
 		}
 		if len(settings) > 0 {

@@ -205,7 +205,7 @@ func (c Controller) includeDBUsers(ctx context.Context, raw map[string]any, data
 			if flow := stringValue(settings["flow"]); flow != "" && !flowSupportedForInbound(inbound) {
 				delete(settings, "flow")
 			}
-			settings["email"] = fmt.Sprintf("%d.%s", user.ID, user.Username)
+			settings["email"] = inboundRuntimeUserEmail(user.ID, user.Username, tag)
 			clients := ensureMap(inbound, "settings")["clients"].([]any)
 			ensureMap(inbound, "settings")["clients"] = append(clients, settings)
 		}
@@ -216,6 +216,12 @@ func (c Controller) includeDBUsers(ctx context.Context, raw map[string]any, data
 func (c Controller) userOperationRequiresConfigSync(ctx context.Context, node NodeRow, operation OperationRow) (bool, error) {
 	if !isRuntimeUserOperation(operation.OperationType) || !operation.UserID.Valid {
 		return false, nil
+	}
+	// Reconcile updates from the node's cached runtime config. The previous
+	// remove-then-add loop touched every inbound and could time out after
+	// removing a user from only part of the node.
+	if operation.OperationType == "update_user" {
+		return true, nil
 	}
 	var serviceID sql.NullInt64
 	if err := c.repo.db.QueryRowContext(ctx, `SELECT service_id FROM users WHERE id = ?`, operation.UserID.Int64).Scan(&serviceID); err != nil {

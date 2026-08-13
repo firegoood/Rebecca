@@ -410,6 +410,7 @@ type RuntimeState struct {
 	InstallMode   string                 `protobuf:"bytes,5,opt,name=install_mode,json=installMode,proto3" json:"install_mode,omitempty"`
 	UpdateChannel string                 `protobuf:"bytes,6,opt,name=update_channel,json=updateChannel,proto3" json:"update_channel,omitempty"`
 	Message       string                 `protobuf:"bytes,7,opt,name=message,proto3" json:"message,omitempty"`
+	Capabilities  []string               `protobuf:"bytes,8,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -491,6 +492,13 @@ func (x *RuntimeState) GetMessage() string {
 		return x.Message
 	}
 	return ""
+}
+
+func (x *RuntimeState) GetCapabilities() []string {
+	if x != nil {
+		return x.Capabilities
+	}
+	return nil
 }
 
 type RuntimeConfigRequest struct {
@@ -2745,6 +2753,7 @@ type UserUsageSample struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Uid           string                 `protobuf:"bytes,1,opt,name=uid,proto3" json:"uid,omitempty"`
 	Value         uint64                 `protobuf:"varint,2,opt,name=value,proto3" json:"value,omitempty"`
+	InboundTag    string                 `protobuf:"bytes,3,opt,name=inbound_tag,json=inboundTag,proto3" json:"inbound_tag,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2791,6 +2800,13 @@ func (x *UserUsageSample) GetValue() uint64 {
 		return x.Value
 	}
 	return 0
+}
+
+func (x *UserUsageSample) GetInboundTag() string {
+	if x != nil {
+		return x.InboundTag
+	}
+	return ""
 }
 
 type OnlineUserIP struct {
@@ -3328,7 +3344,7 @@ const file_rebecca_node_v1_node_proto_rawDesc = "" +
 	"\x0finclude_metrics\x18\x01 \x01(\bR\x0eincludeMetrics\"\x85\x01\n" +
 	"\x0eHealthResponse\x127\n" +
 	"\aruntime\x18\x01 \x01(\v2\x1d.rebecca.node.v1.RuntimeStateR\aruntime\x12:\n" +
-	"\ametrics\x18\x02 \x01(\v2 .rebecca.node.v1.MetricsResponseR\ametrics\"\xf0\x01\n" +
+	"\ametrics\x18\x02 \x01(\v2 .rebecca.node.v1.MetricsResponseR\ametrics\"\x94\x02\n" +
 	"\fRuntimeState\x12\x1c\n" +
 	"\tconnected\x18\x01 \x01(\bR\tconnected\x12\x18\n" +
 	"\astarted\x18\x02 \x01(\bR\astarted\x12!\n" +
@@ -3336,7 +3352,8 @@ const file_rebecca_node_v1_node_proto_rawDesc = "" +
 	"\fnode_version\x18\x04 \x01(\tR\vnodeVersion\x12!\n" +
 	"\finstall_mode\x18\x05 \x01(\tR\vinstallMode\x12%\n" +
 	"\x0eupdate_channel\x18\x06 \x01(\tR\rupdateChannel\x12\x18\n" +
-	"\amessage\x18\a \x01(\tR\amessage\"\xac\x01\n" +
+	"\amessage\x18\a \x01(\tR\amessage\x12\"\n" +
+	"\fcapabilities\x18\b \x03(\tR\fcapabilities\"\xac\x01\n" +
 	"\x14RuntimeConfigRequest\x12!\n" +
 	"\foperation_id\x18\x01 \x01(\tR\voperationId\x12\x1f\n" +
 	"\vconfig_json\x18\x02 \x01(\tR\n" +
@@ -3519,10 +3536,12 @@ const file_rebecca_node_v1_node_proto_rawDesc = "" +
 	"\bbatch_id\x18\x01 \x01(\tR\abatchId\x126\n" +
 	"\x05stats\x18\x02 \x03(\v2 .rebecca.node.v1.UserUsageSampleR\x05stats\x12<\n" +
 	"\n" +
-	"online_ips\x18\x03 \x03(\v2\x1d.rebecca.node.v1.OnlineUserIPR\tonlineIps\"9\n" +
+	"online_ips\x18\x03 \x03(\v2\x1d.rebecca.node.v1.OnlineUserIPR\tonlineIps\"Z\n" +
 	"\x0fUserUsageSample\x12\x10\n" +
 	"\x03uid\x18\x01 \x01(\tR\x03uid\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x04R\x05value\"c\n" +
+	"\x05value\x18\x02 \x01(\x04R\x05value\x12\x1f\n" +
+	"\vinbound_tag\x18\x03 \x01(\tR\n" +
+	"inboundTag\"c\n" +
 	"\fOnlineUserIP\x12\x10\n" +
 	"\x03uid\x18\x01 \x01(\tR\x03uid\x12\x14\n" +
 	"\x05email\x18\x02 \x01(\tR\x05email\x12+\n" +

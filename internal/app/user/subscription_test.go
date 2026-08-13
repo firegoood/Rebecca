@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -151,7 +152,11 @@ func TestStructuredSubscriptionsCoverSupportedShareProtocols(t *testing.T) {
 		}
 	}
 
-	singBoxBody, err := renderSingBoxJSON(links)
+	singBoxBody, err := renderSingBoxJSONWithTemplate(
+		links,
+		readTestTemplateFile(t, filepath.Join("templates", "singbox", "default.json")),
+		readTestTemplateFile(t, filepath.Join("templates", "singbox", "settings.json")),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,6 +172,15 @@ func TestStructuredSubscriptionsCoverSupportedShareProtocols(t *testing.T) {
 	for _, protocol := range []string{"selector", "vless", "vmess", "trojan", "shadowsocks", "hysteria2"} {
 		if !seen[protocol] {
 			t.Fatalf("sing-box output missing %s: %s", protocol, singBoxBody)
+		}
+	}
+	if binary := strings.TrimSpace(os.Getenv("REBECCA_SING_BOX_TEST_BINARY")); binary != "" {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(singBoxBody), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if output, err := exec.Command(binary, "check", "-c", path).CombinedOutput(); err != nil {
+			t.Fatalf("official sing-box rejected the supported protocol set: %v\n%s", err, output)
 		}
 	}
 
@@ -187,6 +201,209 @@ func TestStructuredSubscriptionsCoverSupportedShareProtocols(t *testing.T) {
 		if !v2rayProtocols[protocol] {
 			t.Fatalf("Xray JSON output missing %s: %s", protocol, v2rayBody)
 		}
+	}
+	if binary := strings.TrimSpace(os.Getenv("REBECCA_XRAY_TEST_BINARY")); binary != "" {
+		for index, config := range configs {
+			data, err := json.Marshal(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if output, err := exec.Command(binary, "run", "-test", "-config", path).CombinedOutput(); err != nil {
+				t.Fatalf("official Xray rejected generated config %d: %v\n%s", index+1, err, output)
+			}
+		}
+	}
+}
+
+func TestSingBoxSubscriptionUsesFullTemplateAndRealNames(t *testing.T) {
+	template := readTestTemplateFile(t, filepath.Join("templates", "singbox", "default.json"))
+	settings := `{"wsSettings":{"headers":{"User-Agent":"Rebecca"}}}`
+	remark := url.PathEscape("تهران ویژه")
+	links := []string{
+		"vless://11111111-1111-4111-8111-111111111111@one.example.com:443?security=tls&type=ws&path=%2Fws&host=one.example.com&sni=one.example.com&encryption=none#" + remark,
+		"vless://22222222-2222-4222-8222-222222222222@two.example.com:443?security=tls&type=ws&path=%2Fws&host=two.example.com&sni=two.example.com&encryption=none#" + remark,
+	}
+	body, err := renderSingBoxJSONWithTemplate(links, template, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal([]byte(body), &config); err != nil {
+		t.Fatal(err)
+	}
+	for _, section := range []string{"dns", "inbounds", "outbounds", "route"} {
+		if config[section] == nil {
+			t.Fatalf("sing-box output lost %s: %s", section, body)
+		}
+	}
+
+	wantTags := []any{"Best Latency", "تهران ویژه", "تهران ویژه (2)"}
+	var selector map[string]any
+	proxyCount := 0
+	for _, raw := range config["outbounds"].([]any) {
+		outbound := raw.(map[string]any)
+		switch stringValue(outbound["type"]) {
+		case "selector":
+			if outbound["tag"] == "proxy" {
+				selector = outbound
+			}
+		case "vless":
+			proxyCount++
+			transport := outbound["transport"].(map[string]any)
+			headers := transport["headers"].(map[string]any)
+			if headers["User-Agent"] != "Rebecca" || headers["Host"] == "" {
+				t.Fatalf("sing-box settings/link transport merge failed: %#v", transport)
+			}
+			if strings.HasPrefix(stringValue(outbound["tag"]), "proxy-") {
+				t.Fatalf("sing-box replaced the link name: %#v", outbound["tag"])
+			}
+		}
+	}
+	if selector == nil || proxyCount != 2 {
+		t.Fatalf("missing selector or proxies: %s", body)
+	}
+	if got := selector["outbounds"].([]any); !reflect.DeepEqual(got, wantTags) {
+		t.Fatalf("selector tags = %#v, want %#v", got, wantTags)
+	}
+
+	if binary := strings.TrimSpace(os.Getenv("REBECCA_SING_BOX_TEST_BINARY")); binary != "" {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if output, err := exec.Command(binary, "check", "-c", path).CombinedOutput(); err != nil {
+			t.Fatalf("official sing-box rejected generated config: %v\n%s", err, output)
+		}
+	}
+}
+
+func TestSingBoxOmitsUnsupportedRawHTTPHeaderObfuscation(t *testing.T) {
+	links := []string{
+		"vless://11111111-1111-4111-8111-111111111111@unsupported.example.com:443?security=tls&type=tcp&headerType=http&encryption=none&sni=unsupported.example.com#unsupported-raw-http",
+		"vless://22222222-2222-4222-8222-222222222222@supported.example.com:443?security=tls&type=tcp&headerType=none&encryption=none&sni=supported.example.com#supported-raw",
+	}
+	body, err := renderSingBoxJSON(links)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(body, "unsupported-raw-http") || !strings.Contains(body, "supported-raw") {
+		t.Fatalf("sing-box retained an incompatible RAW HTTP-obfuscated link or lost the supported link: %s", body)
+	}
+	var config map[string]any
+	if err := json.Unmarshal([]byte(body), &config); err != nil {
+		t.Fatal(err)
+	}
+	proxyCount := 0
+	for _, raw := range config["outbounds"].([]any) {
+		if outbound, ok := raw.(map[string]any); ok && stringValue(outbound["type"]) == "vless" {
+			proxyCount++
+		}
+	}
+	if proxyCount != 1 {
+		t.Fatalf("sing-box proxy count = %d, want 1: %s", proxyCount, body)
+	}
+	if binary := strings.TrimSpace(os.Getenv("REBECCA_SING_BOX_TEST_BINARY")); binary != "" {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if output, err := exec.Command(binary, "check", "-c", path).CombinedOutput(); err != nil {
+			t.Fatalf("official sing-box rejected filtered config: %v\n%s", err, output)
+		}
+	}
+}
+
+func TestSingBoxSubscriptionRejectsInvalidTemplates(t *testing.T) {
+	if body, err := renderSingBoxJSONWithTemplate(nil, `{`, ""); err == nil || body != "" || !strings.Contains(err.Error(), "subscription template") {
+		t.Fatalf("invalid subscription template was accepted: body=%q err=%v", body, err)
+	}
+	if body, err := renderSingBoxJSONWithTemplate(nil, `{"outbounds":{}}`, ""); err == nil || body != "" || !strings.Contains(err.Error(), "outbounds must be an array") {
+		t.Fatalf("invalid outbounds were accepted: body=%q err=%v", body, err)
+	}
+	if body, err := renderSingBoxJSONWithTemplate(nil, `{"outbounds":[]}`, `{`); err == nil || body != "" || !strings.Contains(err.Error(), "settings template") {
+		t.Fatalf("invalid settings template was accepted: body=%q err=%v", body, err)
+	}
+}
+
+func TestSingBoxSubscriptionMigratesLegacyCustomTemplate(t *testing.T) {
+	template := `{
+		"dns": {
+			"servers": [
+				{"tag":"dns-remote","address":"1.1.1.2","detour":"proxy"},
+				{"tag":"dns-local","address":"local","detour":"direct"}
+			],
+			"rules":[{"outbound":"any","server":"dns-local"}],
+			"final":"dns-remote"
+		},
+		"inbounds": [{"type":"tun","tag":"tun-in","address":["172.19.0.1/30"],"sniff":true,"domain_strategy":"prefer_ipv4"}],
+		"outbounds": [
+			{"type":"selector","tag":"proxy","outbounds":[]},
+			{"type":"direct","tag":"direct"},
+			{"type":"dns","tag":"dns-out"}
+		],
+		"route": {"rules":[
+			{"protocol":"dns","outbound":"dns-out"},
+			{"ip_is_private":true,"outbound":"direct"}
+		]}
+	}`
+	body, err := renderSingBoxJSONWithTemplate([]string{
+		"vless://11111111-1111-4111-8111-111111111111@example.com:443?security=none&type=tcp&encryption=none#server",
+	}, template, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal([]byte(body), &config); err != nil {
+		t.Fatal(err)
+	}
+	servers := config["dns"].(map[string]any)["servers"].([]any)
+	if servers[0].(map[string]any)["type"] != "udp" || servers[1].(map[string]any)["type"] != "local" {
+		t.Fatalf("legacy DNS servers were not migrated: %#v", servers)
+	}
+	for _, raw := range config["outbounds"].([]any) {
+		if raw.(map[string]any)["type"] == "dns" {
+			t.Fatalf("removed DNS outbound survived migration: %s", body)
+		}
+	}
+	inbound := config["inbounds"].([]any)[0].(map[string]any)
+	if inbound["sniff"] != nil || inbound["domain_strategy"] != nil {
+		t.Fatalf("deprecated inbound fields survived migration: %#v", inbound)
+	}
+	actions := map[string]bool{}
+	for _, raw := range config["route"].(map[string]any)["rules"].([]any) {
+		actions[stringValue(raw.(map[string]any)["action"])] = true
+	}
+	for _, action := range []string{"resolve", "sniff", "hijack-dns", "route"} {
+		if !actions[action] {
+			t.Fatalf("missing migrated %s action: %s", action, body)
+		}
+	}
+	if binary := strings.TrimSpace(os.Getenv("REBECCA_SING_BOX_TEST_BINARY")); binary != "" {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if output, err := exec.Command(binary, "check", "-c", path).CombinedOutput(); err != nil {
+			t.Fatalf("official sing-box rejected migrated custom template: %v\n%s", err, output)
+		}
+	}
+}
+
+func TestSingBoxFallbackTemplateMatchesPackagedDefault(t *testing.T) {
+	fallback, err := singBoxSubscriptionTemplate("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	packaged := map[string]any{}
+	if err := json.Unmarshal([]byte(readTestTemplateFile(t, filepath.Join("templates", "singbox", "default.json"))), &packaged); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(fallback, packaged) {
+		t.Fatal("fallback sing-box template differs from templates/singbox/default.json")
 	}
 }
 
@@ -372,6 +589,52 @@ func TestVLESSEncryptionRoundTripsXrayJSONTemplates(t *testing.T) {
 	}
 }
 
+func TestVLESSXHTTPStructuredOutputsPreserveExtraBlock(t *testing.T) {
+	extra := map[string]any{
+		"scMaxEachPostBytes":   1000000,
+		"scMinPostsIntervalMs": 20,
+		"xPaddingBytes":        "32-256",
+		"seqPlacement":         "header",
+		"seqKey":               "Upload-Offset",
+	}
+	rawExtra, err := json.Marshal(extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	link := "vless://11111111-1111-4111-8111-111111111111@example.com:443?type=xhttp&mode=packet-up&path=%2F&extra=" + url.QueryEscape(string(rawExtra))
+
+	v2rayBody, err := renderV2RayJSONSubscription([]string{link}, false)
+	if err != nil {
+		t.Fatalf("renderV2RayJSONSubscription failed: %v", err)
+	}
+
+	var configs []map[string]any
+	if err := json.Unmarshal([]byte(v2rayBody), &configs); err != nil {
+		t.Fatalf("invalid json generated: %v\n%s", err, v2rayBody)
+	}
+
+	outbounds := configs[0]["outbounds"].([]any)
+	stream := outbounds[0].(map[string]any)["streamSettings"].(map[string]any)
+	xhttpSettings, ok := stream["xhttpSettings"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing xhttpSettings in stream: %#v", stream)
+	}
+
+	if xhttpSettings["path"] != "/" || xhttpSettings["mode"] != "packet-up" {
+		t.Fatalf("xhttpSettings root fields mismatch: %#v", xhttpSettings)
+	}
+
+	extraBlock, ok := xhttpSettings["extra"].(map[string]any)
+	if !ok {
+		t.Fatalf("xhttpSettings lost the 'extra' block: %#v", xhttpSettings)
+	}
+
+	if extraBlock["xPaddingBytes"] != "32-256" || extraBlock["seqKey"] != "Upload-Offset" {
+		t.Fatalf("extra block fields mismatch: %#v", extraBlock)
+	}
+}
+
 func TestVMessECHRoundTripsRawOutboundsubAndXrayJSON(t *testing.T) {
 	const (
 		ech = "AAECAwQFBgcICQ=="
@@ -466,6 +729,7 @@ func TestRealityCompatibilityIsExplicitAcrossStructuredFormats(t *testing.T) {
 			decoded, _ := decodeFlexibleBase64(strings.TrimPrefix(link, "vmess://"))
 			_ = json.Unmarshal(decoded, &payload)
 			payload["spx"] = "/unsupported"
+			payload["pqv"] = "verifier"
 			raw, _ := json.Marshal(payload)
 			link = "vmess://" + base64.RawStdEncoding.EncodeToString(raw)
 		} else {
@@ -474,9 +738,83 @@ func TestRealityCompatibilityIsExplicitAcrossStructuredFormats(t *testing.T) {
 		if body, err := renderClashLikeYAML("alice", []string{link}, true); err == nil || body != "" || !strings.Contains(err.Error(), "spider-x or ML-DSA") {
 			t.Fatalf("Mihomo silently dropped %s unsupported Reality fields: body=%q err=%v", name, body, err)
 		}
-		if body, err := renderSingBoxJSON([]string{link}); err == nil || body != "" || !strings.Contains(err.Error(), "spider-x or ML-DSA") {
+		if body, err := renderSingBoxJSON([]string{link}); err == nil || body != "" || !strings.Contains(err.Error(), "ML-DSA") {
 			t.Fatalf("sing-box silently dropped %s unsupported Reality fields: body=%q err=%v", name, body, err)
 		}
+	}
+}
+
+func TestSingBoxRealityAllowsOptionalSpiderXButRejectsMLDSA(t *testing.T) {
+	base := "vless://11111111-1111-4111-8111-111111111111@example.com:443?security=reality&type=tcp&encryption=none&sni=reality.example.com&fp=chrome&pbk=public-key&sid=01"
+	if body, err := renderSingBoxJSON([]string{base + "&spx=%2Foptional"}); err != nil || !strings.Contains(body, `"type": "vless"`) {
+		t.Fatalf("optional Reality spider-x made the sing-box subscription unusable: body=%s err=%v", body, err)
+	}
+	if body, err := renderSingBoxJSON([]string{base + "&pqv=verifier"}); err == nil || body != "" || !strings.Contains(err.Error(), "ML-DSA") {
+		t.Fatalf("unsupported ML-DSA verifier was silently dropped: body=%q err=%v", body, err)
+	}
+}
+
+func TestConnectableSubscriptionLinksDropsInformationPlaceholders(t *testing.T) {
+	links := []string{
+		"vless://11111111-1111-4111-8111-111111111111@x:443?encryption=none#status",
+		"vless://11111111-1111-4111-8111-111111111111@example.com:443?encryption=none#server",
+		"not-a-share-link",
+	}
+	got := connectableSubscriptionLinks(links)
+	if !reflect.DeepEqual(got, links[1:]) {
+		t.Fatalf("connectable links = %#v, want %#v", got, links[1:])
+	}
+}
+
+func TestXrayJSONUsesImporterCompatibleOutboundSettings(t *testing.T) {
+	vmessPayload, err := json.Marshal(map[string]any{
+		"v": "2", "ps": "vmess", "add": "vmess.example.com", "port": "443",
+		"id": "11111111-1111-4111-8111-111111111111", "aid": "0", "scy": "auto", "net": "tcp",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name     string
+		link     string
+		protocol string
+		address  string
+	}{
+		{name: "vless", protocol: "vless", address: "vless.example.com", link: "vless://11111111-1111-4111-8111-111111111111@vless.example.com:443?encryption=none&type=tcp#vless"},
+		{name: "trojan", protocol: "trojan", address: "trojan.example.com", link: "trojan://secret@trojan.example.com:443?type=tcp#trojan"},
+		{name: "shadowsocks", protocol: "shadowsocks", address: "ss.example.com", link: "ss://YWVzLTI1Ni1nY206c2VjcmV0@ss.example.com:8388#ss"},
+		{name: "vmess", protocol: "vmess", address: "vmess.example.com", link: "vmess://" + base64.RawStdEncoding.EncodeToString(vmessPayload)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := renderV2RayJSONSubscription([]string{tc.link}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var configs []map[string]any
+			if err := json.Unmarshal([]byte(body), &configs); err != nil || len(configs) != 1 {
+				t.Fatalf("invalid Xray JSON: err=%v body=%s", err, body)
+			}
+			outbound := configs[0]["outbounds"].([]any)[0].(map[string]any)
+			if outbound["protocol"] != tc.protocol {
+				t.Fatalf("protocol = %v, want %s", outbound["protocol"], tc.protocol)
+			}
+			settings := outbound["settings"].(map[string]any)
+			var server map[string]any
+			switch tc.protocol {
+			case "vless", "vmess":
+				server = settings["vnext"].([]any)[0].(map[string]any)
+				users := server["users"].([]any)
+				if len(users) != 1 {
+					t.Fatalf("missing importer-compatible users: %#v", settings)
+				}
+			case "trojan", "shadowsocks":
+				server = settings["servers"].([]any)[0].(map[string]any)
+			}
+			if server["address"] != tc.address || int(server["port"].(float64)) <= 0 {
+				t.Fatalf("importer-compatible address/port missing: %#v", settings)
+			}
+		})
 	}
 }
 
