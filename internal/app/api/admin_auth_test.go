@@ -22,6 +22,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	adminapp "github.com/rebeccapanel/rebecca/internal/app/admin"
 	backupapp "github.com/rebeccapanel/rebecca/internal/app/backup"
+	certificateapp "github.com/rebeccapanel/rebecca/internal/app/certificates"
 	nodeapp "github.com/rebeccapanel/rebecca/internal/app/node"
 	"github.com/rebeccapanel/rebecca/internal/app/nodecontroller"
 	settingsapp "github.com/rebeccapanel/rebecca/internal/app/settings"
@@ -43,6 +44,7 @@ func testAdminServer(t *testing.T) (*Server, *sql.DB) {
 		`CREATE TABLE admins (
 			id INTEGER PRIMARY KEY,
 			username TEXT NOT NULL,
+			created_by TEXT NOT NULL DEFAULT 'root',
 			hashed_password TEXT,
 			role TEXT NOT NULL,
 			permissions TEXT,
@@ -301,6 +303,9 @@ func testAdminServer(t *testing.T) (*Server, *sql.DB) {
 		configRepo:     xrayconfig.NewRepository(db, "sqlite", xrayconfig.Options{}),
 		settingsRepo:   settingsapp.NewRepository(db, "sqlite"),
 		backupService:  backupapp.NewService(db, "sqlite", "sqlite:///"+filepath.ToSlash(path)),
+		certificateManager: certificateapp.NewManager(db, certificateapp.Config{
+			BaseDir: filepath.Join(t.TempDir(), "certificates"),
+		}),
 	}
 	telegramRepo := telegramapp.NewRepository(db, "sqlite")
 	telegramSender := telegramapp.NewSender(telegramRepo, "")
@@ -763,6 +768,7 @@ func TestAdminManagementCreateUpdateAndBulkPermissions(t *testing.T) {
 
 	rec := adminJSONRequest(t, server, http.MethodPost, "/api/admin", token, `{
 		"username":"seller",
+		"created_by":"spoofed",
 		"password":"secret1",
 		"role":"standard",
 		"permissions":{"admin_management":{"can_view":true}},
@@ -775,12 +781,16 @@ func TestAdminManagementCreateUpdateAndBulkPermissions(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	if created["username"] != "seller" || created["role"] != "standard" {
+	if created["username"] != "seller" || created["created_by"] != "pouria" || created["role"] != "standard" {
 		t.Fatalf("unexpected created admin: %#v", created)
 	}
 	var usersUsage, lifetimeUsage, createdTraffic, deletedUsersUsage int64
-	if err := db.QueryRow(`SELECT users_usage, lifetime_usage, created_traffic, deleted_users_usage FROM admins WHERE username = 'seller'`).Scan(&usersUsage, &lifetimeUsage, &createdTraffic, &deletedUsersUsage); err != nil {
+	var createdBy string
+	if err := db.QueryRow(`SELECT created_by, users_usage, lifetime_usage, created_traffic, deleted_users_usage FROM admins WHERE username = 'seller'`).Scan(&createdBy, &usersUsage, &lifetimeUsage, &createdTraffic, &deletedUsersUsage); err != nil {
 		t.Fatal(err)
+	}
+	if createdBy != "pouria" {
+		t.Fatalf("created_by = %q, want pouria", createdBy)
 	}
 	if usersUsage != 0 || lifetimeUsage != 0 || createdTraffic != 0 || deletedUsersUsage != 0 {
 		t.Fatalf("unexpected admin counters users=%d lifetime=%d created=%d deleted=%d", usersUsage, lifetimeUsage, createdTraffic, deletedUsersUsage)

@@ -11,6 +11,9 @@ import (
 
 type Config struct {
 	Database                     string
+	CertificateBase              string
+	CertbotBinary                string
+	PHPAppsBase                  string
 	NodeOperationsPollInterval   string
 	NodeUsageCollectionInterval  string
 	NodeUsageCollectionLimit     int
@@ -55,6 +58,9 @@ func LoadConfig() (Config, error) {
 
 	cfg := Config{
 		Database:                     lookup("SQLALCHEMY_DATABASE_URL", "DATABASE_URL"),
+		CertificateBase:              lookup("REBECCA_CERT_BASE"),
+		CertbotBinary:                lookup("REBECCA_CERTBOT_BIN"),
+		PHPAppsBase:                  lookup("REBECCA_PHP_APPS_BASE"),
 		NodeOperationsPollInterval:   lookup("REBECCA_NODE_OPERATIONS_POLL_INTERVAL"),
 		NodeUsageCollectionInterval:  lookup("REBECCA_NODE_USAGE_COLLECTION_INTERVAL"),
 		NodeUsageCollectionLimit:     parseIntDefault(lookup("REBECCA_NODE_USAGE_COLLECTION_LIMIT"), 0),

@@ -64,6 +64,15 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import {
+	cloneFinalMask,
+	type FinalMaskObject,
+	finalMaskValidationError,
+	getFinalMaskCapabilities,
+	hostFinalMaskValue,
+	isFinalMaskObject,
+	sanitizeFinalMask,
+} from "utils/finalmask";
 import { AppleEmojiText } from "./common/AppleEmojiText";
 import { DeleteIcon } from "./common/DeleteIcon";
 import {
@@ -73,13 +82,14 @@ import {
 import { NumericInput } from "./common/NumericInput";
 import { SearchableTagSelect } from "./common/SearchableTagSelect";
 import { DeleteConfirmDialog } from "./dialogs/ConfirmDialog";
+import { FinalMaskEditor } from "./FinalMaskEditor";
 import { JsonEditor } from "./JsonEditor";
 import {
 	DataTable,
-	ResourceListCard,
-	ResourceRefreshButton,
 	type DataTableColumn,
 	type DataTableRowAction,
+	ResourceListCard,
+	ResourceRefreshButton,
 	type ResourceSummaryItem,
 } from "./ui";
 import {
@@ -113,6 +123,7 @@ type HostData = {
 	is_disabled: boolean;
 	fragment_setting: string;
 	noise_setting: string;
+	finalmask: FinalMaskObject | null;
 	random_user_agent: boolean;
 	security: string;
 	alpn: string;
@@ -176,6 +187,15 @@ const coerceHostValue = <Key extends keyof HostData>(
 	) {
 		return normalizeRotationMode(String(value ?? "")) as HostData[Key];
 	}
+	if (key === "finalmask") {
+		return (
+			isFinalMaskObject(value)
+				? cloneFinalMask(value)
+				: value === null
+					? null
+					: currentData.finalmask
+		) as HostData[Key];
+	}
 	return (value ?? "") as HostData[Key];
 };
 
@@ -203,6 +223,7 @@ const EMPTY_HOST_DATA: HostData = {
 	is_disabled: false,
 	fragment_setting: "",
 	noise_setting: "",
+	finalmask: null,
 	random_user_agent: false,
 	security: "inbound_default",
 	alpn: "",
@@ -223,6 +244,10 @@ type InboundOption = {
 	value: string;
 	protocol: string;
 	network: string;
+	alpn?: string;
+	tls?: string;
+	flow?: string;
+	proxyNetwork?: string;
 	port?: number;
 };
 
@@ -384,293 +409,36 @@ const alpnAutocompleteOptions = proxyALPN
 const inboundPortPlaceholder = (inbound?: InboundOption) =>
 	inbound?.port ? `Inbound default: ${inbound.port}` : "Inherited from inbound";
 
-type FragmentFields = {
-	length: string;
-	interval: string;
-	packet: string;
-	maxSplit: string;
-};
+const inheritedHostValue = (value: string, fallback?: string) =>
+	["", "none", "default", "inbound_default", "inbound-default"].includes(
+		value.trim().toLowerCase(),
+	)
+		? fallback
+		: value;
 
-const parseFragmentSetting = (value: string): FragmentFields => {
-	const [length = "", interval = "", packet = "", maxSplit = ""] = value
-		.split(",")
-		.map((item) => item.trim());
-	return { length, interval, packet, maxSplit };
-};
+const finalMaskCapabilitiesForHost = (
+	data: HostData,
+	inbound?: InboundOption,
+) =>
+	getFinalMaskCapabilities({
+		protocol: inbound?.protocol,
+		network: inbound?.network,
+		alpn: inheritedHostValue(data.alpn, inbound?.alpn),
+		security: inheritedHostValue(data.security, inbound?.tls),
+		flow: inbound?.flow,
+		proxyNetwork: inbound?.proxyNetwork,
+	});
 
-const formatFragmentSetting = (fields: FragmentFields) => {
-	const length = fields.length.trim();
-	const interval = fields.interval.trim();
-	const packet = fields.packet.trim();
-	const maxSplit = fields.maxSplit.trim();
-	if (!length && !interval && !packet && !maxSplit) return "";
-	const parts = [
-		length || "10-100",
-		interval || "100-200",
-		packet || "tlshello",
-	];
-	if (maxSplit) parts.push(maxSplit);
-	return parts.join(",");
-};
-
-type NoisePattern = {
-	type: string;
-	packet: string;
-	delay: string;
-};
-
-const defaultNoisePattern = (): NoisePattern => ({
-	type: "rand",
-	packet: "10-20",
-	delay: "100-200",
-});
-
-const parseNoiseSetting = (value: string): NoisePattern[] => {
-	const patterns = value
-		.split("&")
-		.map((raw) => raw.trim())
-		.filter(Boolean)
-		.map((raw) => {
-			const colonIndex = raw.indexOf(":");
-			const type = colonIndex > 0 ? raw.slice(0, colonIndex).trim() : "rand";
-			const rest = colonIndex > 0 ? raw.slice(colonIndex + 1) : raw;
-			const [packet = "", delay = ""] = rest
-				.split(",")
-				.map((item) => item.trim());
-			return {
-				type: ["rand", "str", "hex", "base64"].includes(type) ? type : "rand",
-				packet: packet || "10-20",
-				delay: delay || "100-200",
-			};
-		});
-	return patterns.length ? patterns : [defaultNoisePattern()];
-};
-
-const formatNoiseSetting = (patterns: NoisePattern[]) =>
-	patterns
-		.map((pattern) => ({
-			type: pattern.type || "rand",
-			packet: pattern.packet.trim(),
-			delay: pattern.delay.trim(),
-		}))
-		.filter((pattern) => pattern.packet)
-		.map((pattern) =>
-			pattern.delay
-				? `${pattern.type}:${pattern.packet},${pattern.delay}`
-				: `${pattern.type}:${pattern.packet}`,
-		)
-		.join("&");
-
-const FragmentSettingFields: FC<{
-	value: string;
-	onChange: (value: string) => void;
-}> = ({ value, onChange }) => {
-	const { t } = useTranslation();
-	const fields = parseFragmentSetting(value);
-	const isEnabled = value.trim() !== "";
-	const update = (patch: Partial<FragmentFields>) => {
-		onChange(formatFragmentSetting({ ...fields, ...patch }));
+const fitHostToInbound = (
+	data: HostData,
+	inbound?: InboundOption,
+): HostData => {
+	const capabilities = finalMaskCapabilitiesForHost(data, inbound);
+	return {
+		...data,
+		finalmask: sanitizeFinalMask(data.finalmask, capabilities),
+		mux_enable: capabilities.mux && data.mux_enable,
 	};
-	return (
-		<Box>
-			<Checkbox
-				isChecked={isEnabled}
-				onChange={(event) =>
-					onChange(
-						event.target.checked
-							? formatFragmentSetting(
-									parseFragmentSetting("10-100,100-200,tlshello"),
-								)
-							: "",
-					)
-				}
-			>
-				{t("hostsDialog.fragment")}
-			</Checkbox>
-			{isEnabled && (
-				<Box mt={2} pl={{ base: 0, md: 6 }}>
-					<SimpleGrid columns={{ base: 1, sm: 2, xl: 4 }} spacing={2}>
-						<FormControl>
-							<FormLabel fontSize="xs" color="gray.500" mb={1}>
-								{t("hostsDialog.fragment.length")}
-							</FormLabel>
-							<Input
-								size="sm"
-								value={fields.length}
-								placeholder={t("hostsDialog.fragmentLength")}
-								onChange={(event) => update({ length: event.target.value })}
-							/>
-						</FormControl>
-						<FormControl>
-							<FormLabel fontSize="xs" color="gray.500" mb={1}>
-								{t("hostsDialog.fragmentIntervalLabel")}
-							</FormLabel>
-							<Input
-								size="sm"
-								value={fields.interval}
-								placeholder={t("hostsDialog.fragmentInterval")}
-								onChange={(event) => update({ interval: event.target.value })}
-							/>
-						</FormControl>
-						<FormControl>
-							<FormLabel fontSize="xs" color="gray.500" mb={1}>
-								{t("hostsDialog.fragmentPacketLabel")}
-							</FormLabel>
-							<Input
-								size="sm"
-								value={fields.packet}
-								placeholder={t("hostsDialog.fragmentPacket")}
-								onChange={(event) => update({ packet: event.target.value })}
-							/>
-						</FormControl>
-						<FormControl>
-							<FormLabel fontSize="xs" color="gray.500" mb={1}>
-								{t("hostsDialog.fragmentMaxSplitLabel")}
-							</FormLabel>
-							<Input
-								size="sm"
-								value={fields.maxSplit}
-								placeholder={t("hostsDialog.fragmentMaxSplit")}
-								onChange={(event) => update({ maxSplit: event.target.value })}
-							/>
-						</FormControl>
-					</SimpleGrid>
-					<Text mt={1.5} fontSize="xs" color="gray.500">
-						{t("hostsDialog.fragmentHint")}
-					</Text>
-				</Box>
-			)}
-		</Box>
-	);
-};
-
-const NoisePatternFields: FC<{
-	value: string;
-	onChange: (value: string) => void;
-}> = ({ value, onChange }) => {
-	const { t } = useTranslation();
-	const patterns = parseNoiseSetting(value);
-	const isEnabled = value.trim() !== "";
-	const updatePatterns = (next: NoisePattern[]) =>
-		onChange(formatNoiseSetting(next));
-	const updatePattern = (index: number, patch: Partial<NoisePattern>) => {
-		updatePatterns(
-			patterns.map((pattern, patternIndex) =>
-				patternIndex === index ? { ...pattern, ...patch } : pattern,
-			),
-		);
-	};
-	return (
-		<Box>
-			<Stack
-				direction={{ base: "column", sm: "row" }}
-				spacing={2}
-				align={{ base: "stretch", sm: "center" }}
-				justify="space-between"
-			>
-				<Checkbox
-					isChecked={isEnabled}
-					onChange={(event) =>
-						onChange(
-							event.target.checked
-								? formatNoiseSetting([defaultNoisePattern()])
-								: "",
-						)
-					}
-				>
-					{t("hostsDialog.noise")}
-				</Checkbox>
-				{isEnabled && (
-					<Button
-						size="xs"
-						variant="outline"
-						alignSelf={{ base: "flex-start", sm: "center" }}
-						onClick={() => updatePatterns([...patterns, defaultNoisePattern()])}
-					>
-						{t("hostsDialog.addNoisePattern")}
-					</Button>
-				)}
-			</Stack>
-			{isEnabled && (
-				<Box mt={2} pl={{ base: 0, md: 6 }}>
-					<VStack align="stretch" spacing={2}>
-						{patterns.map((pattern, index) => (
-							<SimpleGrid
-								key={`${index}-${pattern.type}`}
-								columns={{ base: 1, md: 12 }}
-								spacing={2}
-								alignItems="end"
-							>
-								<FormControl gridColumn={{ md: "span 3" }}>
-									<FormLabel fontSize="xs" color="gray.500" mb={1}>
-										{t("inbounds.fallbacks.type")}
-									</FormLabel>
-									<SearchableTagSelect
-										size="sm"
-										value={pattern.type}
-										options={["rand", "str", "hex", "base64"]}
-										placeholder={t("inbounds.fallbacks.type")}
-										onChange={(value) =>
-											updatePattern(index, { type: String(value) })
-										}
-									/>
-								</FormControl>
-								<FormControl gridColumn={{ md: "span 4" }}>
-									<FormLabel fontSize="xs" color="gray.500" mb={1}>
-										{t("hostsDialog.noisePacket")}
-									</FormLabel>
-									<Input
-										size="sm"
-										value={pattern.packet}
-										placeholder={
-											pattern.type === "rand"
-												? "10-20"
-												: t("hostsDialog.noisePacket")
-										}
-										onChange={(event) =>
-											updatePattern(index, { packet: event.target.value })
-										}
-									/>
-								</FormControl>
-								<FormControl gridColumn={{ md: "span 4" }}>
-									<FormLabel fontSize="xs" color="gray.500" mb={1}>
-										{t("hostsDialog.noiseDelay")}
-									</FormLabel>
-									<Input
-										size="sm"
-										value={pattern.delay}
-										placeholder="100-200"
-										onChange={(event) =>
-											updatePattern(index, { delay: event.target.value })
-										}
-									/>
-								</FormControl>
-								<Button
-									size="sm"
-									variant="ghost"
-									colorScheme="red"
-									isDisabled={patterns.length === 1}
-									onClick={() =>
-										updatePatterns(
-											patterns.filter(
-												(_, patternIndex) => patternIndex !== index,
-											),
-										)
-									}
-									gridColumn={{ md: "span 1" }}
-								>
-									×
-								</Button>
-							</SimpleGrid>
-						))}
-					</VStack>
-					<Text mt={1.5} fontSize="xs" color="gray.500">
-						{t("hostsDialog.noiseHint")}
-					</Text>
-				</Box>
-			)}
-		</Box>
-	);
 };
 
 const DynamicTokensPopover: FC = () => {
@@ -761,8 +529,13 @@ const normalizeHostData = (host: HostsSchema[string][number]): HostData => ({
 	mux_enable: normalizeBoolean(host.mux_enable),
 	allowinsecure: normalizeBoolean(host.allowinsecure),
 	is_disabled: normalizeBoolean(host.is_disabled, false),
-	fragment_setting: normalizeString(host.fragment_setting),
-	noise_setting: normalizeString(host.noise_setting),
+	fragment_setting: "",
+	noise_setting: "",
+	finalmask: hostFinalMaskValue(
+		host.finalmask,
+		normalizeString(host.fragment_setting),
+		normalizeString(host.noise_setting),
+	),
 	random_user_agent: normalizeBoolean(host.random_user_agent),
 	security: host.security ?? "inbound_default",
 	alpn: host.alpn ?? "",
@@ -794,6 +567,7 @@ const cloneHostData = (data: HostData): HostData => ({
 	is_disabled: data.is_disabled,
 	fragment_setting: data.fragment_setting,
 	noise_setting: data.noise_setting,
+	finalmask: cloneFinalMask(data.finalmask),
 	random_user_agent: data.random_user_agent,
 	security: data.security,
 	alpn: data.alpn,
@@ -817,14 +591,15 @@ const serializeHostData = (data: HostData) => ({
 	host_options: rotationTextToOptions(data.host_options),
 	host_selection_mode: normalizeRotationMode(data.host_selection_mode),
 	host_ttl_seconds: data.host_ttl_seconds ?? null,
-	fragment_setting: normalizeString(data.fragment_setting),
-	noise_setting: normalizeString(data.noise_setting),
+	fragment_setting: "",
+	noise_setting: "",
+	finalmask: data.finalmask,
 });
 
 const validateHostState = (
 	inboundTag: string,
 	data: HostData | CreateHostValues,
-	protocol?: string,
+	inbound?: InboundOption,
 ): string[] => {
 	const errors: string[] = [];
 	if (!inboundTag.trim()) {
@@ -833,7 +608,7 @@ const validateHostState = (
 	if (!data.remark.trim()) {
 		errors.push("Remark is required.");
 	}
-	const profileNameError = profileHostNameError(protocol, data.remark);
+	const profileNameError = profileHostNameError(inbound?.protocol, data.remark);
 	if (profileNameError) {
 		errors.push(profileNameError);
 	}
@@ -873,6 +648,12 @@ const validateHostState = (
 			errors.push(`${label} is required.`);
 		}
 	}
+	const finalMaskError = finalMaskValidationError(
+		fitHostToInbound(data, inbound).finalmask,
+	);
+	if (finalMaskError) {
+		errors.push(finalMaskError);
+	}
 	return errors;
 };
 
@@ -885,7 +666,12 @@ const isHostDirty = (host: HostState) => {
 	return JSON.stringify(current) !== JSON.stringify(original);
 };
 
-const formatHostForApi = (data: HostData): HostsSchema[string][number] => {
+const formatHostForApi = (
+	rawData: HostData,
+	inbound?: InboundOption,
+	fitToInbound = true,
+): HostsSchema[string][number] => {
+	const data = fitToInbound ? fitHostToInbound(rawData, inbound) : rawData;
 	return {
 		id: data.id ?? null,
 		remark: data.remark.trim(),
@@ -908,10 +694,9 @@ const formatHostForApi = (data: HostData): HostsSchema[string][number] => {
 		mux_enable: data.mux_enable,
 		allowinsecure: data.allowinsecure,
 		is_disabled: data.is_disabled,
-		fragment_setting: data.fragment_setting.trim()
-			? data.fragment_setting.trim()
-			: null,
-		noise_setting: data.noise_setting.trim() ? data.noise_setting.trim() : null,
+		fragment_setting: null,
+		noise_setting: null,
+		finalmask: cloneFinalMask(data.finalmask),
 		random_user_agent: data.random_user_agent,
 		security: data.security || "inbound_default",
 		alpn: data.alpn || "",
@@ -964,16 +749,26 @@ const mapHostsToState = (hosts: HostsSchema): HostState[] => {
 	return sortHosts(result);
 };
 
-const groupHostsByInbound = (items: HostState[]): HostsSchema => {
-	const grouped = new Map<string, HostData[]>();
+const groupHostsByInbound = (
+	items: HostState[],
+	inboundOptions: InboundOption[],
+	fitHostUid?: string,
+): HostsSchema => {
+	const grouped = new Map<string, HostState[]>();
 	items.forEach((host) => {
 		const list = grouped.get(host.inboundTag) ?? [];
-		list.push(host.data);
+		list.push(host);
 		grouped.set(host.inboundTag, list);
 	});
 	const result: HostsSchema = {};
 	grouped.forEach((value, key) => {
-		result[key] = value.map((host) => formatHostForApi(host));
+		result[key] = value.map((host) =>
+			formatHostForApi(
+				host.data,
+				inboundOptions.find((option) => option.value === host.inboundTag),
+				host.uid === fitHostUid,
+			),
+		);
 	});
 	return result;
 };
@@ -981,8 +776,10 @@ const groupHostsByInbound = (items: HostState[]): HostsSchema => {
 const buildInboundPayload = (
 	items: HostState[],
 	inboundTags: Iterable<string>,
+	inboundOptions: InboundOption[],
+	fitHostUid?: string,
 ): Partial<HostsSchema> => {
-	const grouped = groupHostsByInbound(items);
+	const grouped = groupHostsByInbound(items, inboundOptions, fitHostUid);
 	const uniqueTags = Array.from(new Set(inboundTags));
 	const payload: Partial<HostsSchema> = {};
 	uniqueTags.forEach((tag) => {
@@ -1055,11 +852,22 @@ const HostDetailModal: FC<HostDetailModalProps> = ({
 		selectedInbound?.protocol,
 		host?.data.remark ?? "",
 	);
+	const finalMaskCapabilities = finalMaskCapabilitiesForHost(
+		host?.data ?? EMPTY_HOST_DATA,
+		selectedInbound,
+	);
+	const finalMaskError = host
+		? finalMaskValidationError(
+				fitHostToInbound(host.data, selectedInbound).finalmask,
+			)
+		: null;
+	const finalMaskValid = host ? finalMaskError === null : false;
 	const canSubmit = host
 		? Boolean(
 				host.inboundTag &&
 					host.data.remark.trim() &&
 					!remarkError &&
+					finalMaskValid &&
 					(host.data.address.trim() ||
 						rotationTextToOptions(host.data.address_options).length > 0) &&
 					(!isWireGuardInbound ||
@@ -1075,9 +883,9 @@ const HostDetailModal: FC<HostDetailModalProps> = ({
 		}
 		return {
 			inboundTag: host.inboundTag,
-			...formatHostForApi(host.data),
+			...formatHostForApi(host.data, selectedInbound),
 		};
-	}, [host]);
+	}, [host, selectedInbound]);
 	const nodeAddressOptions = useMemo(
 		() => getNodeAddressOptions(nodes),
 		[nodes],
@@ -1109,11 +917,18 @@ const HostDetailModal: FC<HostDetailModalProps> = ({
 			}
 			setJsonText(value);
 			try {
-				const parsed = JSON.parse(value);
-				if (!parsed || typeof parsed !== "object") {
+				const parsed: unknown = JSON.parse(value);
+				if (!isFinalMaskObject(parsed)) {
 					throw new Error("Invalid JSON payload");
 				}
-				const payload = parsed as Record<string, unknown>;
+				const payload = parsed;
+				if (
+					Object.hasOwn(payload, "finalmask") &&
+					payload.finalmask !== null &&
+					!isFinalMaskObject(payload.finalmask)
+				) {
+					throw new Error(t("hostsPage.error.finalMaskObject"));
+				}
 				const nextInboundTag =
 					typeof payload.inboundTag === "string"
 						? payload.inboundTag
@@ -1139,7 +954,7 @@ const HostDetailModal: FC<HostDetailModalProps> = ({
 				setJsonError(error instanceof Error ? error.message : "Invalid JSON");
 			}
 		},
-		[host, onChange, onChangeInbound],
+		[host, onChange, onChangeInbound, t],
 	);
 
 	if (!host) {
@@ -1465,18 +1280,25 @@ const HostDetailModal: FC<HostDetailModalProps> = ({
 											</CardHeader>
 											<CardBody pt={0}>
 												<VStack align="stretch" spacing={4}>
-													<FragmentSettingFields
-														value={host.data.fragment_setting}
-														onChange={(value) =>
-															onChange(host.uid, "fragment_setting", value)
-														}
-													/>
-													<NoisePatternFields
-														value={host.data.noise_setting}
-														onChange={(value) =>
-															onChange(host.uid, "noise_setting", value)
-														}
-													/>
+													{finalMaskCapabilities.supported && (
+														<>
+															<FinalMaskEditor
+																value={sanitizeFinalMask(
+																	host.data.finalmask,
+																	finalMaskCapabilities,
+																)}
+																onChange={(value) =>
+																	onChange(host.uid, "finalmask", value)
+																}
+																capabilities={finalMaskCapabilities}
+															/>
+															{finalMaskError && (
+																<Text fontSize="sm" color="red.500">
+																	{finalMaskError}
+																</Text>
+															)}
+														</>
+													)}
 													<Stack
 														direction={{ base: "column", md: "row" }}
 														spacing={4}
@@ -1493,18 +1315,20 @@ const HostDetailModal: FC<HostDetailModalProps> = ({
 														>
 															{t("hostsDialog.allowinsecure")}
 														</Checkbox>
-														<Checkbox
-															isChecked={host.data.mux_enable}
-															onChange={(event) =>
-																onChange(
-																	host.uid,
-																	"mux_enable",
-																	event.target.checked,
-																)
-															}
-														>
-															{t("hostsDialog.muxEnable")}
-														</Checkbox>
+														{finalMaskCapabilities.mux && (
+															<Checkbox
+																isChecked={host.data.mux_enable}
+																onChange={(event) =>
+																	onChange(
+																		host.uid,
+																		"mux_enable",
+																		event.target.checked,
+																	)
+																}
+															>
+																{t("hostsDialog.muxEnable")}
+															</Checkbox>
+														)}
 														<Checkbox
 															isChecked={host.data.random_user_agent}
 															onChange={(event) =>
@@ -1654,6 +1478,14 @@ const CreateHostModal: FC<CreateHostModalProps> = ({
 		selectedInbound?.protocol,
 		formState.remark,
 	);
+	const finalMaskCapabilities = finalMaskCapabilitiesForHost(
+		formState,
+		selectedInbound,
+	);
+	const finalMaskError = finalMaskValidationError(
+		fitHostToInbound(formState, selectedInbound).finalmask,
+	);
+	const finalMaskValid = finalMaskError === null;
 
 	useEffect(() => {
 		if (isOpen) {
@@ -1667,9 +1499,9 @@ const CreateHostModal: FC<CreateHostModalProps> = ({
 	const jsonPayload = useMemo(
 		() => ({
 			inboundTag: formState.inboundTag,
-			...formatHostForApi(formState),
+			...formatHostForApi(formState, selectedInbound),
 		}),
-		[formState],
+		[formState, selectedInbound],
 	);
 
 	useEffect(() => {
@@ -1685,44 +1517,55 @@ const CreateHostModal: FC<CreateHostModalProps> = ({
 		setJsonError(null);
 	}, [isOpen, jsonPayload]);
 
-	const handleJsonEditorChange = useCallback((value: string) => {
-		setJsonText(value);
-		try {
-			const parsed = JSON.parse(value);
-			if (!parsed || typeof parsed !== "object") {
-				throw new Error("Invalid JSON payload");
-			}
-			const payload = parsed as Record<string, unknown>;
-			updatingFromJsonRef.current = true;
-			setFormState((current) => {
-				let next = {
-					...current,
-					inboundTag:
-						typeof payload.inboundTag === "string"
-							? payload.inboundTag
-							: current.inboundTag,
-				};
-				for (const key of Object.keys(EMPTY_HOST_DATA) as Array<
-					keyof HostData
-				>) {
-					if (Object.hasOwn(payload, key)) {
-						next = {
-							...next,
-							[key]: coerceHostValue(key, payload[key], current),
-						};
-					}
+	const handleJsonEditorChange = useCallback(
+		(value: string) => {
+			setJsonText(value);
+			try {
+				const parsed: unknown = JSON.parse(value);
+				if (!isFinalMaskObject(parsed)) {
+					throw new Error("Invalid JSON payload");
 				}
-				return next;
-			});
-			setJsonError(null);
-		} catch (error) {
-			setJsonError(error instanceof Error ? error.message : "Invalid JSON");
-		}
-	}, []);
+				const payload = parsed;
+				if (
+					Object.hasOwn(payload, "finalmask") &&
+					payload.finalmask !== null &&
+					!isFinalMaskObject(payload.finalmask)
+				) {
+					throw new Error(t("hostsPage.error.finalMaskObject"));
+				}
+				updatingFromJsonRef.current = true;
+				setFormState((current) => {
+					let next = {
+						...current,
+						inboundTag:
+							typeof payload.inboundTag === "string"
+								? payload.inboundTag
+								: current.inboundTag,
+					};
+					for (const key of Object.keys(EMPTY_HOST_DATA) as Array<
+						keyof HostData
+					>) {
+						if (Object.hasOwn(payload, key)) {
+							next = {
+								...next,
+								[key]: coerceHostValue(key, payload[key], current),
+							};
+						}
+					}
+					return next;
+				});
+				setJsonError(null);
+			} catch (error) {
+				setJsonError(error instanceof Error ? error.message : "Invalid JSON");
+			}
+		},
+		[t],
+	);
 
 	const handleSubmit = () => {
 		if (
 			jsonError ||
+			!finalMaskValid ||
 			!formState.inboundTag ||
 			!formState.remark.trim() ||
 			Boolean(remarkError) ||
@@ -1772,12 +1615,13 @@ const CreateHostModal: FC<CreateHostModalProps> = ({
 											value={formState.inboundTag}
 											options={inboundOptions}
 											placeholder={t("hostsPage.inboundLabel")}
-											onChange={(value) =>
+											onChange={(value) => {
+												const inboundTag = String(value);
 												setFormState((prev) => ({
 													...prev,
-													inboundTag: String(value),
-												}))
-											}
+													inboundTag,
+												}));
+											}}
 										/>
 									</FormControl>
 									<FormControl isRequired isInvalid={Boolean(remarkError)}>
@@ -1974,6 +1818,50 @@ const CreateHostModal: FC<CreateHostModalProps> = ({
 												)}
 											</SimpleGrid>
 										)}
+									{finalMaskCapabilities.supported && (
+										<Card className="xray-dialog-section" variant="outline">
+											<CardHeader pb={2}>
+												<Text fontWeight="semibold">
+													{t("hostsPage.section.advanced")}
+												</Text>
+											</CardHeader>
+											<CardBody pt={0}>
+												<VStack align="stretch" spacing={4}>
+													<FinalMaskEditor
+														value={sanitizeFinalMask(
+															formState.finalmask,
+															finalMaskCapabilities,
+														)}
+														onChange={(value) =>
+															setFormState((prev) => ({
+																...prev,
+																finalmask: value,
+															}))
+														}
+														capabilities={finalMaskCapabilities}
+													/>
+													{finalMaskError && (
+														<Text fontSize="sm" color="red.500">
+															{finalMaskError}
+														</Text>
+													)}
+													{finalMaskCapabilities.mux && (
+														<Checkbox
+															isChecked={formState.mux_enable}
+															onChange={(event) =>
+																setFormState((prev) => ({
+																	...prev,
+																	mux_enable: event.target.checked,
+																}))
+															}
+														>
+															{t("hostsDialog.muxEnable")}
+														</Checkbox>
+													)}
+												</VStack>
+											</CardBody>
+										</Card>
+									)}
 								</VStack>
 							</TabPanel>
 							<TabPanel px={0}>
@@ -2002,6 +1890,7 @@ const CreateHostModal: FC<CreateHostModalProps> = ({
 						isLoading={isSubmitting}
 						isDisabled={
 							Boolean(jsonError) ||
+							!finalMaskValid ||
 							!formState.inboundTag ||
 							!formState.remark.trim() ||
 							Boolean(remarkError) ||
@@ -2119,6 +2008,13 @@ export const HostsManager: FC = () => {
 					value: inbound.tag,
 					protocol: inbound.protocol,
 					network: inbound.network,
+					alpn: inbound.alpn,
+					tls: inbound.tls,
+					flow: inbound.flow,
+					proxyNetwork:
+						typeof inbound.settings?.network === "string"
+							? inbound.settings.network
+							: undefined,
 					port: inbound.port,
 				});
 			});
@@ -2196,14 +2092,7 @@ export const HostsManager: FC = () => {
 	const updateHostInbound = (uid: string, inboundTag: string) => {
 		applyHostItems((prev) =>
 			sortHosts(
-				prev.map((host) =>
-					host.uid === uid
-						? {
-								...host,
-								inboundTag,
-							}
-						: host,
-				),
+				prev.map((host) => (host.uid === uid ? { ...host, inboundTag } : host)),
 			),
 		);
 	};
@@ -2216,8 +2105,7 @@ export const HostsManager: FC = () => {
 				validateHostState(
 					host.inboundTag,
 					host.data,
-					inboundOptions.find((option) => option.value === host.inboundTag)
-						?.protocol,
+					inboundOptions.find((option) => option.value === host.inboundTag),
 				),
 			)
 		) {
@@ -2225,10 +2113,12 @@ export const HostsManager: FC = () => {
 		}
 		setSavingHostUid(uid);
 		try {
-			const payload = buildInboundPayload(hostItemsRef.current, [
-				host.inboundTag,
-				host.initialInboundTag,
-			]);
+			const payload = buildInboundPayload(
+				hostItemsRef.current,
+				[host.inboundTag, host.initialInboundTag],
+				inboundOptions,
+				uid,
+			);
 			await setHosts(payload);
 			await fetchHosts();
 			toast({
@@ -2286,17 +2176,23 @@ export const HostsManager: FC = () => {
 		key: Key,
 		value: HostData[Key],
 	) => {
-		setCloneHost((prev) =>
-			prev && prev.uid === uid
-				? { ...prev, data: { ...prev.data, [key]: value } }
-				: prev,
-		);
+		setCloneHost((prev) => {
+			if (!prev || prev.uid !== uid) return prev;
+			return {
+				...prev,
+				data: { ...prev.data, [key]: value },
+			};
+		});
 	};
 
 	const updateCloneInbound = (uid: string, inboundTag: string) => {
-		setCloneHost((prev) =>
-			prev && prev.uid === uid ? { ...prev, inboundTag } : prev,
-		);
+		setCloneHost((prev) => {
+			if (!prev || prev.uid !== uid) return prev;
+			return {
+				...prev,
+				inboundTag,
+			};
+		});
 	};
 
 	const resetCloneHost = (uid: string) => {
@@ -2318,8 +2214,9 @@ export const HostsManager: FC = () => {
 				validateHostState(
 					cloneHost.inboundTag,
 					cloneHost.data,
-					inboundOptions.find((option) => option.value === cloneHost.inboundTag)
-						?.protocol,
+					inboundOptions.find(
+						(option) => option.value === cloneHost.inboundTag,
+					),
 				),
 			)
 		) {
@@ -2359,7 +2256,12 @@ export const HostsManager: FC = () => {
 		try {
 			const nextHosts = sortHosts([...previousHosts, newHost]);
 			applyHostItems(nextHosts);
-			const payload = buildInboundPayload(nextHosts, [cloneHost.inboundTag]);
+			const payload = buildInboundPayload(
+				nextHosts,
+				[cloneHost.inboundTag],
+				inboundOptions,
+				newHost.uid,
+			);
 			await setHosts(payload);
 			await fetchHosts();
 			toast({
@@ -2401,7 +2303,7 @@ export const HostsManager: FC = () => {
 			if (!updatedHost) {
 				throw new Error("Host not found");
 			}
-			const payload = groupHostsByInbound(nextHosts);
+			const payload = groupHostsByInbound(nextHosts, inboundOptions);
 			await setHosts(payload);
 			await fetchHosts();
 		} catch (_error) {
@@ -2424,10 +2326,11 @@ export const HostsManager: FC = () => {
 		try {
 			const nextHosts = hostItemsRef.current.filter((item) => item.uid !== uid);
 			applyHostItems(nextHosts);
-			const payload = buildInboundPayload(nextHosts, [
-				host.inboundTag,
-				host.initialInboundTag,
-			]);
+			const payload = buildInboundPayload(
+				nextHosts,
+				[host.inboundTag, host.initialInboundTag],
+				inboundOptions,
+			);
 			await setHosts(payload);
 			await fetchHosts();
 			toast({
@@ -2475,7 +2378,11 @@ export const HostsManager: FC = () => {
 		applyHostItems(nextHosts);
 		setBulkAction(isActive ? "enable" : "disable");
 		try {
-			const payload = buildInboundPayload(nextHosts, affectedTags);
+			const payload = buildInboundPayload(
+				nextHosts,
+				affectedTags,
+				inboundOptions,
+			);
 			await setHosts(payload);
 			await fetchHosts();
 			setSelectedHostUids([]);
@@ -2515,7 +2422,11 @@ export const HostsManager: FC = () => {
 		applyHostItems(nextHosts);
 		setBulkAction("delete");
 		try {
-			const payload = buildInboundPayload(nextHosts, affectedTags);
+			const payload = buildInboundPayload(
+				nextHosts,
+				affectedTags,
+				inboundOptions,
+			);
 			await setHosts(payload);
 			await fetchHosts();
 			setSelectedHostUids([]);
@@ -2544,8 +2455,7 @@ export const HostsManager: FC = () => {
 				validateHostState(
 					values.inboundTag,
 					values,
-					inboundOptions.find((option) => option.value === values.inboundTag)
-						?.protocol,
+					inboundOptions.find((option) => option.value === values.inboundTag),
 				),
 			)
 		) {
@@ -2566,7 +2476,12 @@ export const HostsManager: FC = () => {
 			const nextHosts = sortHosts([...hostItemsRef.current, newHost]);
 			applyHostItems(nextHosts);
 
-			const payload = buildInboundPayload(nextHosts, [inboundTag]);
+			const payload = buildInboundPayload(
+				nextHosts,
+				[inboundTag],
+				inboundOptions,
+				newHost.uid,
+			);
 			await setHosts(payload);
 			await fetchHosts();
 			toast({

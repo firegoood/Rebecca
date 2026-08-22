@@ -197,6 +197,21 @@ export interface SubscriptionCertificate {
 	last_issued_at: string | null;
 	last_renewed_at: string | null;
 	path: string;
+	status:
+		| "active"
+		| "expiring"
+		| "expired"
+		| "not_yet_valid"
+		| "missing"
+		| "invalid"
+		| "revoking"
+		| "revoked";
+	not_before: string | null;
+	not_after: string | null;
+	issuer: string | null;
+	fingerprint_sha256: string | null;
+	auto_renew: boolean;
+	serve_tls: boolean;
 }
 
 export interface SubscriptionSettingsBundle {
@@ -218,10 +233,18 @@ export interface CertificateIssuePayload {
 	email: string;
 	domains: string[];
 	admin_id?: number | null;
+	provider: "letsencrypt" | "zerossl";
 }
 
 export interface CertificateRenewPayload {
-	domain?: string | null;
+	domain: string;
+}
+
+export interface CertificateImportPayload {
+	domain: string;
+	admin_id?: number | null;
+	fullchain: string;
+	private_key: string;
 }
 
 export interface RuntimeSettingsResponse {
@@ -295,6 +318,85 @@ export const disablePHPMyAdmin =
 			timeout: 600000,
 		});
 	};
+
+export interface PHPAppRecord {
+	template: "archive" | "mirzabot";
+	name: string;
+	domain: string;
+	enabled: boolean;
+	runtime: "static" | "php";
+	version?: string;
+	source_sha?: string;
+	installed_at: string;
+	php_version?: string;
+	bot_username?: string;
+	public_url: string;
+}
+
+export interface PHPAppTemplate {
+	id: "archive" | "mirzabot";
+	name: string;
+	supported: boolean;
+	detail?: string;
+	version?: string;
+	source_sha?: string;
+}
+
+export interface PHPAppsResponse {
+	supported: boolean;
+	detail: string;
+	templates: PHPAppTemplate[];
+	apps: PHPAppRecord[];
+}
+
+export const getPHPApps = async (): Promise<PHPAppsResponse> => {
+	return apiFetch("/settings/php-apps");
+};
+
+export const installPHPArchive = async (payload: {
+	domain: string;
+	name: string;
+	archive: File;
+}): Promise<PHPAppRecord> => {
+	const body = new FormData();
+	body.set("domain", payload.domain);
+	body.set("name", payload.name);
+	body.set("archive", payload.archive);
+	return $fetch("/settings/php-apps/archive", {
+		method: "POST",
+		body,
+		timeout: 20 * 60 * 1000,
+	});
+};
+
+export const installMirzaBot = async (payload: {
+	domain: string;
+	bot_token: string;
+	admin_id: string;
+}): Promise<PHPAppRecord> => {
+	return apiFetch("/settings/php-apps/mirzabot", {
+		method: "POST",
+		body: JSON.stringify(payload),
+		timeout: 20 * 60 * 1000,
+	});
+};
+
+export const setPHPAppEnabled = async (payload: {
+	domain: string;
+	enabled: boolean;
+}): Promise<PHPAppRecord> => {
+	return apiFetch(
+		`/settings/php-apps/${encodeURIComponent(payload.domain)}/${payload.enabled ? "enable" : "disable"}`,
+		{ method: "POST", body: JSON.stringify({}), timeout: 120000 },
+	);
+};
+
+export const deletePHPApp = async (domain: string): Promise<void> => {
+	await apiFetch(`/settings/php-apps/${encodeURIComponent(domain)}`, {
+		method: "DELETE",
+		timeout: 10 * 60 * 1000,
+	});
+};
 
 export const getPHPMyAdminEmbedHTML = async (
 	theme?: string,
@@ -413,4 +515,44 @@ export const renewSubscriptionCertificate = async (
 		method: "POST",
 		body: JSON.stringify(payload),
 	});
+};
+
+export const importSubscriptionCertificate = async (
+	payload: CertificateImportPayload,
+): Promise<SubscriptionCertificate> => {
+	return apiFetch("/settings/subscriptions/certificates/import", {
+		method: "POST",
+		body: JSON.stringify(payload),
+	});
+};
+
+export const revokeSubscriptionCertificate = async (
+	domain: string,
+): Promise<SubscriptionCertificate> => {
+	return apiFetch(
+		`/settings/subscriptions/certificates/${encodeURIComponent(domain)}/revoke`,
+		{ method: "POST", body: JSON.stringify({}) },
+	);
+};
+
+export const deleteSubscriptionCertificate = async (
+	domain: string,
+): Promise<void> => {
+	return apiFetch(
+		`/settings/subscriptions/certificates/${encodeURIComponent(domain)}`,
+		{ method: "DELETE" },
+	);
+};
+
+export const updateSubscriptionCertificateServing = async (
+	domain: string,
+	serveTLS: boolean,
+): Promise<SubscriptionCertificate> => {
+	return apiFetch(
+		`/settings/subscriptions/certificates/${encodeURIComponent(domain)}`,
+		{
+			method: "PUT",
+			body: JSON.stringify({ serve_tls: serveTLS }),
+		},
+	);
 };

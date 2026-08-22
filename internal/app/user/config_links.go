@@ -101,6 +101,7 @@ func BuildConfigLinks(
 	)
 
 	links := make([]string, 0)
+	metadata := make([]ConfigLinkMetadata, 0)
 	type tagBinding struct {
 		settings map[string]any
 		protocol string
@@ -157,6 +158,7 @@ func BuildConfigLinks(
 			}
 			if link != "" {
 				links = append(links, link)
+				metadata = append(metadata, configLinkMetadata(effective))
 			}
 			continue
 		}
@@ -179,15 +181,33 @@ func BuildConfigLinks(
 		}
 		if link != "" {
 			links = append(links, link)
+			metadata = append(metadata, configLinkMetadata(effective))
 		}
 	}
 
 	if reverse {
 		for i, j := 0, len(links)-1; i < j; i, j = i+1, j-1 {
 			links[i], links[j] = links[j], links[i]
+			metadata[i], metadata[j] = metadata[j], metadata[i]
 		}
 	}
-	return ConfigLinksResponse{Links: links}, nil
+	return ConfigLinksResponse{Links: links, Metadata: metadata}, nil
+}
+
+func configLinkMetadata(inbound ResolvedInbound) ConfigLinkMetadata {
+	finalMask := cloneJSONMap(mapValue(inbound["finalmask"]))
+	legacy := map[string]any{}
+	if fragment := fragmentFinalMask(stringValue(inbound["fragment_setting"])); len(fragment) > 0 {
+		legacy["tcp"] = []any{map[string]any{"type": "fragment", "settings": fragment}}
+	}
+	if noise := noiseFinalMask(stringValue(inbound["noise_setting"])); len(noise) > 0 {
+		legacy["udp"] = []any{map[string]any{"type": "noise", "settings": map[string]any{"noise": noise}}}
+	}
+	finalMask = mergeV2RayFinalMask(finalMask, legacy)
+	return ConfigLinkMetadata{
+		FinalMask:  finalMask,
+		MuxEnabled: boolValue(inbound["mux_enable"]),
+	}
 }
 
 func selectConfigHosts(hosts []Host, serviceID *int64) []configHost {
@@ -389,11 +409,17 @@ func effectiveInboundForHost(username string, variables map[string]string, inbou
 	if host.AllowInsecure != nil && *host.AllowInsecure {
 		effective["ais"] = *host.AllowInsecure
 	}
-	if host.FragmentSetting != nil {
-		effective["fragment_setting"] = *host.FragmentSetting
-	}
-	if host.NoiseSetting != nil {
-		effective["noise_setting"] = *host.NoiseSetting
+	if len(host.FinalMask) > 0 {
+		effective["finalmask"] = mergeHostFinalMask(inbound["finalmask"], host.FinalMask)
+		delete(effective, "fragment_setting")
+		delete(effective, "noise_setting")
+	} else {
+		if host.FragmentSetting != nil {
+			effective["fragment_setting"] = *host.FragmentSetting
+		}
+		if host.NoiseSetting != nil {
+			effective["noise_setting"] = *host.NoiseSetting
+		}
 	}
 	effective["mux_enable"] = host.MuxEnable
 	effective["random_user_agent"] = host.RandomUserAgent
@@ -404,7 +430,32 @@ func effectiveInboundForHost(username string, variables map[string]string, inbou
 		effective["pbk"] = pbk
 	}
 	effective["sid"] = firstNonEmptyString(firstStringList(inbound["sids"]), inbound["sid"], firstStringList(inbound["shortIds"]), inbound["shortId"])
+	if normalizeProxyProtocol(stringValue(effective["protocol"])) == "hysteria" {
+		applyHysteriaFinalMaskShareFields(effective)
+	}
 	return remark, address, effective, true
+}
+
+func mergeHostFinalMask(inherited any, override map[string]any) map[string]any {
+	merged := make(map[string]any, len(mapValue(inherited))+len(override))
+	for key, value := range mapValue(inherited) {
+		merged[key] = value
+	}
+	for key, value := range override {
+		if key == "quicParams" {
+			quic := make(map[string]any)
+			for inheritedKey, inheritedValue := range mapValue(merged[key]) {
+				quic[inheritedKey] = inheritedValue
+			}
+			for overrideKey, overrideValue := range mapValue(value) {
+				quic[overrideKey] = overrideValue
+			}
+			merged[key] = quic
+			continue
+		}
+		merged[key] = value
+	}
+	return merged
 }
 
 func mergeResolvedInboundMetadata(target ResolvedInbound, source ResolvedInbound) {
@@ -412,7 +463,7 @@ func mergeResolvedInboundMetadata(target ResolvedInbound, source ResolvedInbound
 		return
 	}
 	for _, key := range []string{
-		"tls", "sni", "host", "path", "header_type", "fp", "alpn", "ais", "allowinsecure", "flow",
+		"tls", "sni", "host", "path", "header_type", "fp", "alpn", "ais", "allowinsecure", "flow", "cipherSuites",
 		"ech", "echConfigList", "vcn", "verifyPeerCertByName", "pinSHA256", "pinnedPeerCertSha256",
 		"pbk", "publicKey", "public_key", "sids", "sid", "shortIds", "shortId", "spx", "pqv",
 		"fragment_setting", "noise_setting",
@@ -955,7 +1006,10 @@ func vmessShareLink(remark string, address string, path string, inbound Resolved
 	tls := stringValue(inbound["tls"])
 	if tls == "tls" {
 		payload["sni"] = stringValue(inbound["sni"])
-		payload["fp"] = stringValue(inbound["fp"])
+		payload["fp"] = clientTLSFingerprint(inbound)
+		if cipherSuites := stringValue(inbound["cipherSuites"]); cipherSuites != "" {
+			payload["cs"] = cipherSuites
+		}
 		if alpn := stringValue(inbound["alpn"]); alpn != "" {
 			payload["alpn"] = alpn
 		}
@@ -1364,7 +1418,10 @@ func appendQueryParamIfNotEmpty(params []queryParam, key string, value any) []qu
 func appendTLSParams(params []queryParam, tls string, inbound ResolvedInbound) []queryParam {
 	switch tls {
 	case "tls":
-		params = append(params, queryParam{"sni", stringValue(inbound["sni"])}, queryParam{"fp", stringValue(inbound["fp"])})
+		params = append(params, queryParam{"sni", stringValue(inbound["sni"])}, queryParam{"fp", clientTLSFingerprint(inbound)})
+		if cipherSuites := stringValue(inbound["cipherSuites"]); cipherSuites != "" {
+			params = append(params, queryParam{"cs", cipherSuites})
+		}
 		if alpn := stringValue(inbound["alpn"]); alpn != "" {
 			params = append(params, queryParam{"alpn", alpn})
 		}
@@ -1395,6 +1452,13 @@ func appendTLSParams(params []queryParam, tls string, inbound ResolvedInbound) [
 		}
 	}
 	return params
+}
+
+func clientTLSFingerprint(inbound ResolvedInbound) string {
+	if stringValue(inbound["cipherSuites"]) != "" {
+		return "unsafe"
+	}
+	return stringValue(inbound["fp"])
 }
 
 func appendMaskParams(params []queryParam, inbound ResolvedInbound) []queryParam {
@@ -1476,6 +1540,9 @@ func resolveInbound(inbound map[string]any) (ResolvedInbound, error) {
 		tlsSettings := mapValue(stream["tlsSettings"])
 		tlsMeta := mapValue(tlsSettings["settings"])
 		resolved["sni"] = nonEmptyStrings(firstNonEmptyString(tlsSettings["serverName"], tlsSettings["sni"], tlsMeta["serverName"], tlsMeta["sni"]))
+		if cipherSuites := firstNonEmptyString(tlsSettings["cipherSuites"], tlsMeta["cipherSuites"]); cipherSuites != "" {
+			resolved["cipherSuites"] = cipherSuites
+		}
 		if fp := firstNonEmptyString(tlsMeta["fingerprint"], tlsSettings["fingerprint"]); fp != "" {
 			resolved["fp"] = fp
 		}
@@ -1547,30 +1614,7 @@ func resolveInbound(inbound map[string]any) (ResolvedInbound, error) {
 		if timeout := intValue(hysteriaSettings["udpIdleTimeout"]); timeout > 0 {
 			resolved["hysteria_udp_idle_timeout"] = timeout
 		}
-		finalmask := mapValue(stream["finalmask"])
-		if udpMasks, ok := finalmask["udp"].([]any); ok {
-			for _, item := range udpMasks {
-				mask := mapValue(item)
-				if stringValue(mask["type"]) != "salamander" {
-					continue
-				}
-				maskSettings := mapValue(mask["settings"])
-				if password := stringValue(maskSettings["password"]); password != "" {
-					resolved["obfs"] = "salamander"
-					resolved["obfs-password"] = password
-					if packetSize := stringValue(maskSettings["packetSize"]); packetSize != "" {
-						resolved["obfs"] = "gecko"
-						resolved["hysteria_gecko_packet_size"] = packetSize
-					}
-				}
-				break
-			}
-		}
-		quicParams := mapValue(finalmask["quicParams"])
-		udpHop := mapValue(quicParams["udpHop"])
-		if ports := stringValue(udpHop["ports"]); ports != "" {
-			resolved["mport"] = ports
-		}
+		applyHysteriaFinalMaskShareFields(resolved)
 	case "tcp", "raw":
 		header := mapValue(networkSettings["header"])
 		resolved["header_type"] = stringValue(header["type"])
@@ -1643,6 +1687,32 @@ func resolveInbound(inbound map[string]any) (ResolvedInbound, error) {
 		resolved["host"] = stringList(networkSettings["host"])
 	}
 	return resolved, nil
+}
+
+func applyHysteriaFinalMaskShareFields(resolved ResolvedInbound) {
+	for _, key := range []string{"obfs", "obfs-password", "hysteria_gecko_packet_size", "mport"} {
+		delete(resolved, key)
+	}
+	finalMask := mapValue(resolved["finalmask"])
+	for _, item := range listAny(finalMask["udp"]) {
+		mask := mapValue(item)
+		if !strings.EqualFold(stringValue(mask["type"]), "salamander") {
+			continue
+		}
+		settings := mapValue(mask["settings"])
+		if password := stringValue(settings["password"]); password != "" {
+			resolved["obfs"] = "salamander"
+			resolved["obfs-password"] = password
+			if packetSize := stringValue(settings["packetSize"]); packetSize != "" {
+				resolved["obfs"] = "gecko"
+				resolved["hysteria_gecko_packet_size"] = packetSize
+			}
+		}
+		break
+	}
+	if ports := stringValue(mapValue(mapValue(finalMask["quicParams"])["udpHop"])["ports"]); ports != "" {
+		resolved["mport"] = ports
+	}
 }
 
 func normalizeProxyProtocol(value string) string {

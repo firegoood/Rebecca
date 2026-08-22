@@ -10,6 +10,7 @@ import (
 const (
 	maxAPIRequestBodyBytes        int64 = 8 << 20
 	maxPHPMyAdminRequestBodyBytes int64 = 1024 << 20
+	maxPHPAppRequestBodyBytes     int64 = 34 << 20
 )
 
 func apiRequestBodyLimit(path string) int64 {
@@ -18,6 +19,9 @@ func apiRequestBodyLimit(path string) int64 {
 	}
 	if strings.HasPrefix(path, phpMyAdminEmbedPath) {
 		return maxPHPMyAdminRequestBodyBytes
+	}
+	if path == "/api/settings/php-apps/archive" {
+		return maxPHPAppRequestBodyBytes
 	}
 	return maxAPIRequestBodyBytes
 }
@@ -82,7 +86,7 @@ func (s *Server) Handler() http.Handler {
 	})
 
 	r.NotFound(s.handleHomeOrSubscriptionPath)
-	return withAPIRequestBodyLimit(r)
+	return &phpAppAwareHandler{apps: s.phpApps, next: withAPIRequestBodyLimit(r)}
 }
 
 func (s *Server) registerAdminRoutes(r chi.Router) {
@@ -164,11 +168,15 @@ func (s *Server) registerSettingsRoutes(r chi.Router) {
 	r.HandleFunc("/settings/phpmyadmin/embed/*", s.handlePHPMyAdmin)
 	r.HandleFunc("/settings/phpmyadmin/*", s.requireSudo(s.handlePHPMyAdmin))
 	r.HandleFunc("/settings/phpmyadmin", s.requireSudo(s.handlePHPMyAdmin))
+	r.HandleFunc("/settings/php-apps/*", s.requireSudo(s.handlePHPApps))
+	r.HandleFunc("/settings/php-apps", s.requireSudo(s.handlePHPApps))
 	r.HandleFunc("/settings/telegram/backup/send", s.requireSudo(s.handleTelegramBackupSend))
 	r.HandleFunc("/settings/telegram/test", s.requireSudo(s.handleTelegramSettingsTest))
 	r.HandleFunc("/settings/telegram", s.requireSudo(s.handleTelegramSettings))
-	r.HandleFunc("/settings/subscriptions/certificates/issue", s.requireSudo(s.handleSettingsDisabledRoute))
-	r.HandleFunc("/settings/subscriptions/certificates/renew", s.requireSudo(s.handleSettingsDisabledRoute))
+	r.HandleFunc("/settings/subscriptions/certificates/issue", s.requireSudo(s.handleCertificateIssue))
+	r.HandleFunc("/settings/subscriptions/certificates/import", s.requireSudo(s.handleCertificateImport))
+	r.HandleFunc("/settings/subscriptions/certificates/renew", s.requireSudo(s.handleCertificateRenew))
+	r.HandleFunc("/settings/subscriptions/certificates/*", s.requireSudo(s.handleCertificatePath))
 	r.HandleFunc("/settings/subscriptions/admins/*", s.requireSudo(s.handleAdminSubscriptionSettingsPath))
 	r.HandleFunc("/settings/subscriptions/templates/*", s.requireSudo(s.handleSubscriptionTemplatePath))
 	r.HandleFunc("/settings/subscriptions", s.requireSudo(s.handleSubscriptionSettings))

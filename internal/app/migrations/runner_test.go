@@ -53,7 +53,7 @@ func TestRunMigrationsFreshSQLiteAndDoubleRun(t *testing.T) {
 	if !version.HasGoose || version.GooseVersion != latestGooseVersion {
 		t.Fatalf("unexpected version after first run: %#v", version)
 	}
-	assertTableColumns(t, ctx, db, "sqlite", "admins", []string{"id", "username", "role", "permissions", "status", "created_traffic", "delete_user_usage_limit"})
+	assertTableColumns(t, ctx, db, "sqlite", "admins", []string{"id", "username", "created_by", "role", "permissions", "status", "created_traffic", "delete_user_usage_limit"})
 	assertTableColumns(t, ctx, db, "sqlite", "admin_api_keys", []string{"id", "admin_id", "key_hash", "created_at", "expires_at", "last_used_at"})
 	assertTableColumns(t, ctx, db, "sqlite", "admin_usage_logs", []string{"admin_id", "used_traffic_at_reset", "created_traffic_at_reset", "reset_at"})
 	assertTableColumns(t, ctx, db, "sqlite", "admin_created_traffic_logs", []string{"admin_id", "service_id", "amount", "action", "created_at"})
@@ -65,7 +65,7 @@ func TestRunMigrationsFreshSQLiteAndDoubleRun(t *testing.T) {
 	assertNoTable(t, ctx, db, "sqlite", "template_inbounds_association")
 	assertNoTable(t, ctx, db, "sqlite", "exclude_inbounds_association")
 	assertNoTable(t, ctx, db, "sqlite", "access_insights")
-	assertTableColumns(t, ctx, db, "sqlite", "hosts", []string{"id", "remark", "inbound_tag", "noise_setting", "random_user_agent", "dns_primary", "dns_secondary"})
+	assertTableColumns(t, ctx, db, "sqlite", "hosts", []string{"id", "remark", "inbound_tag", "noise_setting", "finalmask", "random_user_agent", "dns_primary", "dns_secondary"})
 	assertNoColumn(t, ctx, db, "sqlite", "hosts", "sort")
 	assertTableColumns(t, ctx, db, "sqlite", "nodes", []string{"id", "name", "note", "certificate", "certificate_key", "xray_config_mode"})
 	assertNoColumn(t, ctx, db, "sqlite", "nodes", "use_nobetci")
@@ -441,6 +441,59 @@ func TestDetectGooseVersion(t *testing.T) {
 	}
 	if !version.HasGoose || version.GooseVersion != latestGooseVersion {
 		t.Fatalf("unexpected goose version: %#v", version)
+	}
+}
+
+func TestPreGooseVersion45SchemaStillRunsHostFinalMaskMigration(t *testing.T) {
+	ctx := context.Background()
+	db := openSQLiteTestDB(t)
+	if err := RunMigrations(ctx, db, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `DROP TABLE goose_db_version`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE hosts DROP COLUMN finalmask`); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunMigrations(ctx, db, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	assertTableColumns(t, ctx, db, "sqlite", "hosts", []string{"finalmask"})
+}
+
+func TestPreGooseVersion46SchemaStillRunsAdminCreatedByMigration(t *testing.T) {
+	ctx := context.Background()
+	db := openSQLiteTestDB(t)
+	if err := RunMigrationsTo(ctx, db, "sqlite", 46); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO admins (id, username, hashed_password, role, status) VALUES (9101, 'legacy_admin', 'x', 'standard', 'active')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `DROP TABLE goose_db_version`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE alembic_version (version_num TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO alembic_version (version_num) VALUES (?)`, legacyAlembicFinalRevision); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunMigrations(ctx, db, "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	assertDBStringMigration(t, db, `SELECT created_by FROM admins WHERE id = 9101`, "root")
+	if _, err := db.ExecContext(ctx, `INSERT INTO admins (id, username, hashed_password, role, status) VALUES (9102, 'default_admin', 'x', 'standard', 'active')`); err != nil {
+		t.Fatal(err)
+	}
+	assertDBStringMigration(t, db, `SELECT created_by FROM admins WHERE id = 9102`, "root")
+	if _, err := db.ExecContext(ctx, `INSERT INTO admins (id, username, hashed_password, role, status, created_by) VALUES (9103, 'api_admin', 'x', 'standard', 'active', 'pouria')`); err != nil {
+		t.Fatal(err)
+	}
+	assertDBStringMigration(t, db, `SELECT created_by FROM admins WHERE id = 9103`, "pouria")
+	if _, err := db.ExecContext(ctx, `INSERT INTO admins (id, username, hashed_password, role, status, created_by) VALUES (9104, 'invalid_admin', 'x', 'standard', 'active', NULL)`); err == nil {
+		t.Fatal("expected created_by NOT NULL constraint")
 	}
 }
 
