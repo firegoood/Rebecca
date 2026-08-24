@@ -1,4 +1,4 @@
-package api
+package externalapps
 
 import (
 	"bytes"
@@ -17,20 +17,20 @@ import (
 	"time"
 )
 
-func preparePHPAppHost(ctx context.Context) error {
+func prepareExternalAppHost(ctx context.Context) error {
 	binary := "/usr/local/bin/rebecca"
 	if _, err := os.Stat(binary); err != nil {
 		binary = "rebecca"
 	}
-	output, err := runPHPAppCommand(ctx, 15*time.Minute, binary, "prepare-php-app-hosting")
+	output, err := runExternalAppCommand(ctx, 15*time.Minute, binary, "prepare-external-app-hosting")
 	if err != nil {
-		return fmt.Errorf("prepare PHP application host: %s", limitedPHPAppCommandOutput(output, err))
+		return fmt.Errorf("prepare PHP application host: %s", limitedExternalAppCommandOutput(output, err))
 	}
 	return nil
 }
 
 func activePHPVersion(ctx context.Context, requireMirza bool) (string, error) {
-	output, err := runPHPAppCommand(ctx, time.Minute, "php", "-r", `echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;`)
+	output, err := runExternalAppCommand(ctx, time.Minute, "php", "-r", `echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;`)
 	if err != nil {
 		return "", fmt.Errorf("detect PHP version: %w", err)
 	}
@@ -57,36 +57,36 @@ func activePHPVersion(ctx context.Context, requireMirza bool) (string, error) {
 	return version, nil
 }
 
-func ensurePHPAppRuntimeFree(ctx context.Context, record phpAppRecord) error {
+func ensureExternalAppRuntimeFree(ctx context.Context, record Record) error {
 	for _, path := range []string{record.PoolConfig, record.Socket} {
 		if _, err := os.Stat(path); err == nil {
-			return errPHPAppExists
+			return errExternalAppExists
 		} else if !os.IsNotExist(err) {
 			return err
 		}
 	}
-	if phpAppSystemUserExists(ctx, record.SystemUser) {
-		return errPHPAppExists
+	if externalAppSystemUserExists(ctx, record.SystemUser) {
+		return errExternalAppExists
 	}
 	return nil
 }
 
-func (m *phpAppManager) ensureMirzaInstallTargetsFree(ctx context.Context, record phpAppRecord) error {
+func (m *Manager) ensureMirzaInstallTargetsFree(ctx context.Context, record Record) error {
 	for _, path := range []string{
 		record.Root,
 		record.PoolConfig,
 		record.CronConfig,
-		m.recordPath(domainHash(record.Domain)),
-		m.secretPath(domainHash(record.Domain)),
+		m.recordPathFor(record),
+		m.secretPathFor(record),
 	} {
 		if _, err := os.Stat(path); err == nil {
-			return errPHPAppExists
+			return errExternalAppExists
 		} else if !os.IsNotExist(err) {
 			return err
 		}
 	}
-	if phpAppSystemUserExists(ctx, record.SystemUser) {
-		return errPHPAppExists
+	if externalAppSystemUserExists(ctx, record.SystemUser) {
+		return errExternalAppExists
 	}
 	query := "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name=" + sqlString(record.Database) + ";\n" +
 		"SELECT COUNT(*) FROM mysql.user WHERE User=" + sqlString(record.DatabaseUser) + ";\n"
@@ -96,13 +96,13 @@ func (m *phpAppManager) ensureMirzaInstallTargetsFree(ctx context.Context, recor
 	}
 	for _, value := range strings.Fields(string(output)) {
 		if value != "0" {
-			return errPHPAppExists
+			return errExternalAppExists
 		}
 	}
 	return nil
 }
 
-func prepareOwnedPHPAppTree(root string, uid, gid int) error {
+func prepareOwnedExternalAppTree(root string, uid, gid int) error {
 	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -142,11 +142,11 @@ func makeStaticTreeReadOnly(root string) error {
 	})
 }
 
-func writePHPAppPool(record phpAppRecord, mirza bool) error {
-	return writeAtomicFile(record.PoolConfig, []byte(phpAppPoolConfig(record, mirza)), 0o600)
+func writeExternalAppPool(record Record, mirza bool) error {
+	return writeAtomicFile(record.PoolConfig, []byte(externalAppPoolConfig(record, mirza)), 0o600)
 }
 
-func phpAppPoolConfig(record phpAppRecord, mirza bool) string {
+func externalAppPoolConfig(record Record, mirza bool) string {
 	disabledFunctions := "exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec"
 	if mirza {
 		// MirzaBot's database backup uses exec; all other process-spawning APIs stay disabled.
@@ -185,15 +185,15 @@ php_admin_value[memory_limit] = 256M
 		disabledFunctions, record.Root, record.Root, record.Root, record.Root)
 }
 
-func reloadPHPFPM(ctx context.Context, record phpAppRecord) error {
+func reloadPHPFPM(ctx context.Context, record Record) error {
 	binary := "php-fpm" + record.PHPVersion
-	if output, err := runPHPAppCommand(ctx, time.Minute, binary, "-t"); err != nil {
-		return fmt.Errorf("validate PHP-FPM configuration: %s", limitedPHPAppCommandOutput(output, err))
+	if output, err := runExternalAppCommand(ctx, time.Minute, binary, "-t"); err != nil {
+		return fmt.Errorf("validate PHP-FPM configuration: %s", limitedExternalAppCommandOutput(output, err))
 	}
-	if output, err := runPHPAppCommand(ctx, time.Minute, "systemctl", "reload", record.Service); err != nil {
-		return fmt.Errorf("reload PHP-FPM: %s", limitedPHPAppCommandOutput(output, err))
+	if output, err := runExternalAppCommand(ctx, time.Minute, "systemctl", "reload", record.Service); err != nil {
+		return fmt.Errorf("reload PHP-FPM: %s", limitedExternalAppCommandOutput(output, err))
 	}
-	return waitForPHPAppPath(ctx, record.Socket, 10*time.Second)
+	return waitForExternalAppPath(ctx, record.Socket, 10*time.Second)
 }
 
 func installMirzaBotDependencies(ctx context.Context, appRoot, systemUser string) error {
@@ -207,7 +207,7 @@ func installMirzaBotDependencies(ctx context.Context, appRoot, systemUser string
 	command.Env = append(os.Environ(), "HOME="+appRoot, "COMPOSER_HOME="+filepath.Join(appRoot, ".composer"), "COMPOSER_NO_INTERACTION=1")
 	output, err := command.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("install pinned MirzaBot dependencies: %s", limitedPHPAppCommandOutput(output, err))
+		return fmt.Errorf("install pinned MirzaBot dependencies: %s", limitedExternalAppCommandOutput(output, err))
 	}
 	if _, err := os.Stat(filepath.Join(appRoot, "vendor", "autoload.php")); err != nil {
 		return errors.New("Composer completed without vendor/autoload.php")
@@ -220,11 +220,10 @@ func initializeMirzaBotDatabase(ctx context.Context, appRoot, systemUser string,
 	if err != nil {
 		return err
 	}
-	needle := []byte("telegram('setwebhook', [\n    'url' => \"https://$domainhosts/index.php\"\n]);")
-	if bytes.Count(table, needle) != 1 {
-		return errors.New("pinned MirzaBot table initializer changed unexpectedly")
+	initializer, err := mirzaBotTableInitializer(table)
+	if err != nil {
+		return err
 	}
-	initializer := bytes.Replace(table, needle, []byte("// Webhook is configured by Rebecca with a secret token."), 1)
 	path := filepath.Join(appRoot, ".rebecca-init.php")
 	if err := os.WriteFile(path, initializer, 0o600); err != nil {
 		return err
@@ -239,12 +238,20 @@ func initializeMirzaBotDatabase(ctx context.Context, appRoot, systemUser string,
 	command.Dir = appRoot
 	output, err := command.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("initialize MirzaBot database: %s", limitedPHPAppCommandOutput(output, err))
+		return fmt.Errorf("initialize MirzaBot database: %s", limitedExternalAppCommandOutput(output, err))
 	}
 	return nil
 }
 
-func writePHPAppSecretFile(root, name, value string, uid, gid int) error {
+func mirzaBotTableInitializer(table []byte) ([]byte, error) {
+	needle := []byte("telegram('setwebhook', [\n    'url' => \"https://$domainhosts/index.php\"\n]);")
+	if bytes.Count(table, needle) != 1 {
+		return nil, errors.New("pinned MirzaBot table initializer changed unexpectedly")
+	}
+	return bytes.Replace(table, needle, []byte("// Webhook is configured by Rebecca with a secret token."), 1), nil
+}
+
+func writeExternalAppSecretFile(root, name, value string, uid, gid int) error {
 	path := filepath.Join(root, name)
 	if err := os.WriteFile(path, []byte(value+"\n"), 0o600); err != nil {
 		return err
@@ -277,15 +284,15 @@ var mirzaCronTasks = []mirzaCronTask{
 	{"* * * * *", "lottery.php"},
 }
 
-func writeMirzaCron(record phpAppRecord) error {
+func writeMirzaCron(record Record) error {
 	secretPath := filepath.Join(record.Root, ".rebecca-cron-secret")
 	var content strings.Builder
 	content.WriteString("SHELL=/bin/sh\nPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nMAILTO=\"\"\n\n")
 	for _, task := range mirzaCronTasks {
 		lockPath := filepath.Join(record.Root, ".locks", strings.TrimSuffix(task.path, ".php")+".lock")
 		fmt.Fprintf(&content,
-			"%s %s /usr/bin/flock -n %s /usr/bin/curl -fsS --max-time 50 --resolve %s:443:127.0.0.1 -H \"X-Rebecca-Cron-Secret: $(/bin/cat %s)\" https://%s/cronbot/%s >/dev/null 2>&1\n",
-			task.schedule, record.SystemUser, shellQuote(lockPath), record.Domain, shellQuote(secretPath), record.Domain, task.path,
+			"%s %s /usr/bin/flock -n %s /usr/bin/curl -fsS --max-time 50 --resolve %s:443:127.0.0.1 -H \"X-Rebecca-Cron-Secret: $(/bin/cat %s)\" %s/cronbot/%s >/dev/null 2>&1\n",
+			task.schedule, record.SystemUser, shellQuote(lockPath), record.Domain, shellQuote(secretPath), externalAppPublicURL(record), task.path,
 		)
 	}
 	return writeAtomicFile(record.CronConfig, []byte(content.String()), 0o644)
@@ -323,8 +330,38 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-func (m *phpAppManager) createPHPAppDatabase(ctx context.Context, database, username, password string) error {
-	credentials, err := parsePHPMyAdminCredentials(m.databaseURL)
+type databaseCredentials struct {
+	Username string
+	Host     string
+	Port     string
+}
+
+func parseDatabaseCredentials(databaseURL string) (databaseCredentials, error) {
+	parsed, err := url.Parse(strings.TrimSpace(databaseURL))
+	if err != nil {
+		return databaseCredentials{}, err
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if !strings.HasPrefix(scheme, "mysql") && !strings.HasPrefix(scheme, "mariadb") {
+		return databaseCredentials{}, errors.New("external application databases require MySQL or MariaDB")
+	}
+	username := strings.TrimSpace(parsed.User.Username())
+	if username == "" {
+		return databaseCredentials{}, errors.New("database username is missing")
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := strings.TrimSpace(parsed.Port())
+	if port == "" {
+		port = "3306"
+	}
+	return databaseCredentials{Username: username, Host: host, Port: port}, nil
+}
+
+func (m *Manager) createExternalAppDatabase(ctx context.Context, database, username, password string) error {
+	credentials, err := parseDatabaseCredentials(m.databaseURL)
 	if err != nil {
 		return err
 	}
@@ -356,7 +393,7 @@ func (m *phpAppManager) createPHPAppDatabase(ctx context.Context, database, user
 	return nil
 }
 
-func (m *phpAppManager) verifyPHPAppDatabase(ctx context.Context, database string) error {
+func (m *Manager) verifyExternalAppDatabase(ctx context.Context, database string) error {
 	output, err := m.mysqlRoot(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema="+sqlString(database)+";\n")
 	if err != nil {
 		return fmt.Errorf("verify MirzaBot database: %w", err)
@@ -368,14 +405,50 @@ func (m *phpAppManager) verifyPHPAppDatabase(ctx context.Context, database strin
 	return nil
 }
 
-func (m *phpAppManager) dropPHPAppDatabase(ctx context.Context, database, username string) error {
+func (m *Manager) importExternalAppDatabase(ctx context.Context, database, username, password string, data []byte) error {
+	if len(data) == 0 || len(data) > maxExternalAppArchiveBytes {
+		return errors.New("SQL backup is empty or exceeds 32 MiB")
+	}
+	file, err := os.CreateTemp("", "rebecca-mysql-app-*.cnf")
+	if err != nil {
+		return err
+	}
+	name := file.Name()
+	defer os.Remove(name)
+	if err := file.Chmod(0o600); err != nil {
+		file.Close()
+		return err
+	}
+	_, writeErr := fmt.Fprintf(file, "[client]\nuser=%s\npassword=%s\nhost=127.0.0.1\nport=3306\n", mysqlOptionFileValue(username), mysqlOptionFileValue(password))
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil {
+		return errors.New("write temporary database credentials")
+	}
+	binary := "mysql"
+	if _, err := exec.LookPath(binary); err != nil {
+		binary = "mariadb"
+		if _, err := exec.LookPath(binary); err != nil {
+			return errors.New("MySQL or MariaDB client is not installed")
+		}
+	}
+	commandCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	command := exec.CommandContext(commandCtx, binary, "--defaults-extra-file="+name, "--protocol=tcp", "--database="+database)
+	command.Stdin = bytes.NewReader(data)
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("import MirzaBot database backup: %s", limitedExternalAppCommandOutput(output, err))
+	}
+	return nil
+}
+
+func (m *Manager) dropExternalAppDatabase(ctx context.Context, database, username string) error {
 	query := fmt.Sprintf("DROP DATABASE IF EXISTS %s;\nDROP USER IF EXISTS %s@'127.0.0.1';\nDROP USER IF EXISTS %s@'localhost';\n",
 		sqlIdentifier(database), sqlString(username), sqlString(username))
 	_, err := m.mysqlRoot(ctx, query)
 	return err
 }
 
-func (m *phpAppManager) mysqlRoot(parent context.Context, query string) ([]byte, error) {
+func (m *Manager) mysqlRoot(parent context.Context, query string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(parent, time.Minute)
 	defer cancel()
 	binary := "mysql"
@@ -398,7 +471,7 @@ func (m *phpAppManager) mysqlRoot(parent context.Context, query string) ([]byte,
 	if output, err := run("", "--protocol=socket"); err == nil {
 		return output, nil
 	}
-	password := phpMyAdminEnvValue("MYSQL_ROOT_PASSWORD")
+	password := strings.TrimSpace(m.rootPassword)
 	if password == "" {
 		return nil, errors.New("local root socket authentication failed")
 	}
@@ -420,7 +493,7 @@ func (m *phpAppManager) mysqlRoot(parent context.Context, query string) ([]byte,
 	if output, err := run(name, "--protocol=socket"); err == nil {
 		return output, nil
 	}
-	credentials, err := parsePHPMyAdminCredentials(m.databaseURL)
+	credentials, err := parseDatabaseCredentials(m.databaseURL)
 	if err == nil {
 		if output, tcpErr := run(name, "--protocol=tcp", "--host="+credentials.Host, "--port="+credentials.Port); tcpErr == nil {
 			return output, nil
@@ -440,14 +513,15 @@ type mirzaBotSource struct {
 	Archive []byte
 }
 
-func (m *phpAppManager) downloadMirzaBot(ctx context.Context) (mirzaBotSource, error) {
+type mirzaBotRelease struct {
+	Version string
+	SHA     string
+}
+
+func (m *Manager) latestMirzaBotRelease(ctx context.Context) (mirzaBotRelease, error) {
 	apiBase := strings.TrimSuffix(m.mirzaAPIBase, "/")
 	if apiBase == "" {
 		apiBase = mirzaBotAPIBaseURL
-	}
-	archiveBase := strings.TrimSuffix(m.mirzaArchive, "/")
-	if archiveBase == "" {
-		archiveBase = mirzaBotArchiveBaseURL
 	}
 	var release struct {
 		TagName    string `json:"tag_name"`
@@ -455,28 +529,58 @@ func (m *phpAppManager) downloadMirzaBot(ctx context.Context) (mirzaBotSource, e
 		Prerelease bool   `json:"prerelease"`
 	}
 	if err := m.getMirzaBotJSON(ctx, apiBase+"/releases/latest", &release); err != nil {
-		return mirzaBotSource{}, fmt.Errorf("find latest stable MirzaBot release: %w", err)
+		return mirzaBotRelease{}, fmt.Errorf("find latest stable MirzaBot release: %w", err)
 	}
 	release.TagName = strings.TrimSpace(release.TagName)
 	if release.Draft || release.Prerelease || !mirzaReleasePattern.MatchString(release.TagName) {
-		return mirzaBotSource{}, errors.New("GitHub did not return a valid stable MirzaBot release")
+		return mirzaBotRelease{}, errors.New("GitHub did not return a valid stable MirzaBot release")
 	}
 	var commit struct {
 		SHA string `json:"sha"`
 	}
 	if err := m.getMirzaBotJSON(ctx, apiBase+"/commits/"+url.PathEscape(release.TagName), &commit); err != nil {
-		return mirzaBotSource{}, fmt.Errorf("resolve MirzaBot release commit: %w", err)
+		return mirzaBotRelease{}, fmt.Errorf("resolve MirzaBot release commit: %w", err)
 	}
 	commit.SHA = strings.ToLower(strings.TrimSpace(commit.SHA))
 	if !mirzaCommitPattern.MatchString(commit.SHA) {
-		return mirzaBotSource{}, errors.New("GitHub returned an invalid MirzaBot release commit")
+		return mirzaBotRelease{}, errors.New("GitHub returned an invalid MirzaBot release commit")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, archiveBase+"/zip/"+commit.SHA, nil)
+	return mirzaBotRelease{Version: release.TagName, SHA: commit.SHA}, nil
+}
+
+func (m *Manager) cachedMirzaBotRelease(ctx context.Context) (mirzaBotRelease, error) {
+	m.releaseMu.Lock()
+	defer m.releaseMu.Unlock()
+	if m.release.SHA != "" && time.Now().Before(m.releaseUntil) {
+		return m.release, nil
+	}
+	release, err := m.latestMirzaBotRelease(ctx)
+	if err != nil {
+		if m.release.SHA != "" {
+			return m.release, nil
+		}
+		return mirzaBotRelease{}, err
+	}
+	m.release = release
+	m.releaseUntil = time.Now().Add(10 * time.Minute)
+	return release, nil
+}
+
+func (m *Manager) downloadMirzaBot(ctx context.Context) (mirzaBotSource, error) {
+	release, err := m.latestMirzaBotRelease(ctx)
+	if err != nil {
+		return mirzaBotSource{}, err
+	}
+	archiveBase := strings.TrimSuffix(m.mirzaArchive, "/")
+	if archiveBase == "" {
+		archiveBase = mirzaBotArchiveBaseURL
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, archiveBase+"/zip/"+release.SHA, nil)
 	if err != nil {
 		return mirzaBotSource{}, err
 	}
 	setMirzaBotGitHubHeaders(req)
-	response, err := m.doPHPAppRequest(req)
+	response, err := m.doExternalAppRequest(req)
 	if err != nil {
 		return mirzaBotSource{}, errors.New("download latest stable MirzaBot source failed")
 	}
@@ -484,23 +588,23 @@ func (m *phpAppManager) downloadMirzaBot(ctx context.Context) (mirzaBotSource, e
 	if response.StatusCode != http.StatusOK {
 		return mirzaBotSource{}, fmt.Errorf("download latest stable MirzaBot source returned HTTP %d", response.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, maxPHPAppArchiveBytes+1))
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxExternalAppArchiveBytes+1))
 	if err != nil {
 		return mirzaBotSource{}, fmt.Errorf("read MirzaBot archive: %w", err)
 	}
-	if len(data) == 0 || len(data) > maxPHPAppArchiveBytes {
+	if len(data) == 0 || len(data) > maxExternalAppArchiveBytes {
 		return mirzaBotSource{}, errors.New("MirzaBot archive is empty or exceeds 32 MiB")
 	}
-	return mirzaBotSource{Version: release.TagName, SHA: commit.SHA, Archive: data}, nil
+	return mirzaBotSource{Version: release.Version, SHA: release.SHA, Archive: data}, nil
 }
 
-func (m *phpAppManager) getMirzaBotJSON(ctx context.Context, endpoint string, target any) error {
+func (m *Manager) getMirzaBotJSON(ctx context.Context, endpoint string, target any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err
 	}
 	setMirzaBotGitHubHeaders(req)
-	response, err := m.doPHPAppRequest(req)
+	response, err := m.doExternalAppRequest(req)
 	if err != nil {
 		return err
 	}
@@ -515,7 +619,7 @@ func (m *phpAppManager) getMirzaBotJSON(ctx context.Context, endpoint string, ta
 	return nil
 }
 
-func (m *phpAppManager) doPHPAppRequest(request *http.Request) (*http.Response, error) {
+func (m *Manager) doExternalAppRequest(request *http.Request) (*http.Response, error) {
 	if m.httpClient != nil {
 		return m.httpClient.Do(request)
 	}
@@ -527,7 +631,7 @@ func setMirzaBotGitHubHeaders(request *http.Request) {
 	request.Header.Set("User-Agent", "Rebecca")
 }
 
-func (m *phpAppManager) telegramBotUsername(ctx context.Context, token string) (string, error) {
+func (m *Manager) telegramBotUsername(ctx context.Context, token string) (string, error) {
 	var response struct {
 		OK     bool `json:"ok"`
 		Result struct {
@@ -544,9 +648,9 @@ func (m *phpAppManager) telegramBotUsername(ctx context.Context, token string) (
 	return username, nil
 }
 
-func (m *phpAppManager) setTelegramWebhook(ctx context.Context, token, domain, secret string) error {
+func (m *Manager) setTelegramWebhook(ctx context.Context, token string, record Record, secret string) error {
 	payload := url.Values{
-		"url":                  {"https://" + domain + "/index.php"},
+		"url":                  {externalAppWebhookURL(record)},
 		"secret_token":         {secret},
 		"drop_pending_updates": {"false"},
 	}
@@ -562,7 +666,14 @@ func (m *phpAppManager) setTelegramWebhook(ctx context.Context, token, domain, s
 	return nil
 }
 
-func (m *phpAppManager) deleteTelegramWebhook(ctx context.Context, token string) error {
+func externalAppWebhookURL(record Record) string {
+	if record.Path != "" {
+		return externalAppPublicURL(record)
+	}
+	return externalAppPublicURL(record) + "/index.php"
+}
+
+func (m *Manager) deleteTelegramWebhook(ctx context.Context, token string) error {
 	var response struct {
 		OK bool `json:"ok"`
 	}
@@ -575,7 +686,7 @@ func (m *phpAppManager) deleteTelegramWebhook(ctx context.Context, token string)
 	return nil
 }
 
-func (m *phpAppManager) telegramRequest(ctx context.Context, token, method string, payload url.Values, target any) error {
+func (m *Manager) telegramRequest(ctx context.Context, token, method string, payload url.Values, target any) error {
 	endpoint := "https://api.telegram.org/bot" + token + "/" + method
 	var body io.Reader
 	if payload != nil {
@@ -619,6 +730,13 @@ func mirzaBotConfig(database, username, password, botToken, adminID, domain, bot
 		"?>\n"
 }
 
+func externalAppHostPath(record Record) string {
+	if record.Path == "" {
+		return record.Domain
+	}
+	return record.Domain + "/" + record.Path
+}
+
 func phpSingleQuoted(value string) string {
 	return strings.NewReplacer("\\", "\\\\", "'", "\\'", "\r", "", "\n", "").Replace(value)
 }
@@ -631,7 +749,7 @@ func sqlString(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
-func runPHPAppCommand(parent context.Context, timeout time.Duration, name string, args ...string) ([]byte, error) {
+func runExternalAppCommand(parent context.Context, timeout time.Duration, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	output, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
@@ -641,7 +759,7 @@ func runPHPAppCommand(parent context.Context, timeout time.Duration, name string
 	return output, err
 }
 
-func limitedPHPAppCommandOutput(output []byte, err error) string {
+func limitedExternalAppCommandOutput(output []byte, err error) string {
 	message := strings.TrimSpace(string(output))
 	if len(message) > 2000 {
 		message = message[len(message)-2000:]
@@ -653,11 +771,11 @@ func limitedPHPAppCommandOutput(output []byte, err error) string {
 }
 
 func unixUserIDs(ctx context.Context, username string) (int, int, error) {
-	uidOutput, err := runPHPAppCommand(ctx, time.Minute, "id", "-u", username)
+	uidOutput, err := runExternalAppCommand(ctx, time.Minute, "id", "-u", username)
 	if err != nil {
 		return 0, 0, err
 	}
-	gidOutput, err := runPHPAppCommand(ctx, time.Minute, "id", "-g", username)
+	gidOutput, err := runExternalAppCommand(ctx, time.Minute, "id", "-g", username)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -669,7 +787,7 @@ func unixUserIDs(ctx context.Context, username string) (int, int, error) {
 	return uid, gid, nil
 }
 
-func phpAppSystemUserExists(ctx context.Context, username string) bool {
+func externalAppSystemUserExists(ctx context.Context, username string) bool {
 	if username == "" {
 		return false
 	}
@@ -678,7 +796,7 @@ func phpAppSystemUserExists(ctx context.Context, username string) bool {
 	return exec.CommandContext(commandCtx, "id", "-u", username).Run() == nil
 }
 
-func waitForPHPAppPath(ctx context.Context, path string, timeout time.Duration) error {
+func waitForExternalAppPath(ctx context.Context, path string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(path); err == nil {
