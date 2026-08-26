@@ -128,6 +128,10 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 	const sidebarBorderColor = useColorModeValue("panel.border", "panel.border");
 	const sidebarPanelBg = useColorModeValue("panel.elevated", "panel.elevated");
 	const sidebarPanelBorder = useColorModeValue("panel.border", "panel.border");
+	const sidebarShadow = useColorModeValue(
+		"0 18px 48px rgba(15, 23, 42, 0.10)",
+		"0 18px 48px rgba(0, 0, 0, 0.32)",
+	);
 	const itemColor = useColorModeValue(
 		"panel.textSecondary",
 		"panel.textSecondary",
@@ -243,13 +247,6 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 			: null,
 		isPrivilegedAdmin
 			? {
-					title: t("apiDocs.menu"),
-					url: "/api-docs",
-					icon: ApiDocsIconStyled,
-				}
-			: null,
-		isPrivilegedAdmin
-			? {
 					title: t("phpmyadmin.menu"),
 					url: "/phpmyadmin",
 					icon: PHPMyAdminIconStyled,
@@ -260,6 +257,13 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 					title: t("externalApps.menu"),
 					url: "/external-apps",
 					icon: ExternalAppsIconStyled,
+				}
+			: null,
+		isPrivilegedAdmin
+			? {
+					title: t("apiDocs.menu"),
+					url: "/api-docs",
+					icon: ApiDocsIconStyled,
 				}
 			: null,
 		{
@@ -383,9 +387,9 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 				pickSetting("/xray-logs"),
 				pickSetting("/access-insights"),
 				pickSetting("/recent-actions"),
-				pickSetting("/api-docs"),
 				pickSetting("/phpmyadmin"),
 				pickSetting("/external-apps"),
+				pickSetting("/api-docs"),
 				pickSetting(tutorialsUrl),
 			],
 		},
@@ -398,18 +402,19 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 
 	return (
 		<Box
-			w={inDrawer ? "full" : collapsed ? "16" : "60"}
-			h={inDrawer ? "100%" : "100vh"}
-			maxH={inDrawer ? "100%" : "100vh"}
+			w={inDrawer ? "full" : collapsed ? "16" : "56"}
+			h={inDrawer ? "100%" : "calc(100vh - 24px)"}
+			maxH={inDrawer ? "100%" : "calc(100vh - 24px)"}
 			bg={sidebarBg}
-			borderRight={inDrawer || isRTL ? undefined : "1px"}
-			borderLeft={inDrawer || !isRTL ? undefined : "1px"}
+			borderWidth={inDrawer ? undefined : "1px"}
 			borderColor={inDrawer ? undefined : sidebarBorderColor}
-			transition="width 0.3s"
+			borderRadius={inDrawer ? undefined : "2xl"}
+			boxShadow={inDrawer ? undefined : sidebarShadow}
+			transition="width 0.3s ease"
 			position={inDrawer ? "relative" : "fixed"}
-			top={inDrawer ? undefined : "0"}
-			left={inDrawer || isRTL ? undefined : "0"}
-			right={inDrawer || !isRTL ? undefined : "0"}
+			top={inDrawer ? undefined : "12px"}
+			left={inDrawer || isRTL ? undefined : "12px"}
+			right={inDrawer || !isRTL ? undefined : "12px"}
 			overflow="hidden"
 			flexShrink={0}
 			userSelect="none"
