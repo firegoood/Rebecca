@@ -16,9 +16,13 @@ import (
 )
 
 const usagePersistBatchSize = 200
-const usageOnlineTouchInterval = 90 * time.Second
+const usageOnlineTouchInterval = 10 * time.Second
 
 var usageFlushMu sync.Mutex
+
+type usageExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
 
 type UserUsageDelta struct {
 	UserID             int64
@@ -736,10 +740,10 @@ func (r Repository) queueRuntimeSyncForStaleUsersTx(ctx context.Context, tx *sql
 	return staleCount, nil
 }
 
-func (r Repository) batchTouchUsersOnline(ctx context.Context, tx *sql.Tx, userIDs []int64, now time.Time) error {
+func (r Repository) batchTouchUsersOnline(ctx context.Context, exec usageExecer, userIDs []int64, now time.Time) error {
 	cutoff := now.Add(-usageOnlineTouchInterval)
 	return forEachInt64Chunk(userIDs, usagePersistBatchSize, func(chunk []int64) error {
-		query := `UPDATE users
+		query := `UPDATE ` + r.onlineUsersUpdateTarget() + `
 SET online_at = ?
 WHERE status IN ('active', 'on_hold')
   AND id IN (` + placeholders(len(chunk)) + `)
@@ -748,8 +752,29 @@ WHERE status IN ('active', 'on_hold')
 		args = append(args, r.timeArg(now))
 		args = append(args, int64Args(chunk)...)
 		args = append(args, r.timeArg(cutoff))
-		_, err := tx.ExecContext(ctx, query, args...)
+		_, err := exec.ExecContext(ctx, query, args...)
 		return err
+	})
+}
+
+func (r Repository) onlineUsersUpdateTarget() string {
+	if r.dialect == "mysql" || r.dialect == "mariadb" {
+		return "users FORCE INDEX (PRIMARY)"
+	}
+	return "users"
+}
+
+func (r Repository) TouchUsersOnline(ctx context.Context, userIDs []int64) error {
+	userIDs = uniquePositiveInt64(userIDs)
+	if len(userIDs) == 0 {
+		return nil
+	}
+	sort.Slice(userIDs, func(i, j int) bool { return userIDs[i] < userIDs[j] })
+	now := time.Now().UTC()
+	return retryTransientUsageWrite(ctx, func() error {
+		// Each chunk is an independent, idempotent update. This avoids retaining
+		// thousands of row locks while the next collector starts.
+		return r.batchTouchUsersOnline(ctx, r.db, userIDs, now)
 	})
 }
 
