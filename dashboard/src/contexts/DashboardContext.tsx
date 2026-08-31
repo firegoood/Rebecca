@@ -1,4 +1,3 @@
-import { StatisticsQueryKey } from "components/Statistics";
 import { fetch } from "service/http";
 import type {
 	AdvancedUserActionPayload,
@@ -16,6 +15,8 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 
 const DEFAULT_SORT = "-created_at";
+
+const StatisticsQueryKey = "statistics-query-key";
 
 export type FilterType = {
 	search?: string;
@@ -191,6 +192,12 @@ export type InboundType = {
 };
 export type Inbounds = Map<ProtocolType, InboundType[]>;
 
+export type LiveUserStats = {
+	is_online: boolean;
+	upload_speed: number;
+	download_speed: number;
+};
+
 type DashboardStateType = {
 	isCreatingNewUser: boolean;
 	editingUser: User | null | undefined;
@@ -201,6 +208,7 @@ type DashboardStateType = {
 	quickEditUser: { user: UserListItem; field: "expire" | "data_limit" } | null;
 	version: string | null;
 	users: UsersListResponse;
+	liveUserStats: Record<string, LiveUserStats>;
 	linkTemplates?: Record<string, string[]>; // Link templates for generating user links
 	inbounds: Inbounds;
 	loading: boolean;
@@ -397,14 +405,13 @@ export const fetchInbounds = () => {
 			console.error("Failed to fetch inbounds:", error);
 			useDashboard.setState({ inbounds: new Map() });
 		})
-		.finally(() => {
-			if (requestId === inboundsFetchSequence) {
-				if (inboundsAbortController === abortController) {
-					inboundsAbortController = null;
+			.finally(() => {
+				if (requestId === inboundsFetchSequence) {
+					if (inboundsAbortController === abortController) {
+						inboundsAbortController = null;
+					}
 				}
-				useDashboard.setState({ loading: false });
-			}
-		});
+			});
 };
 
 export const clearDashboardCache = () => {
@@ -417,6 +424,7 @@ export const clearDashboardCache = () => {
 	inboundsAbortController = null;
 	useDashboard.setState({
 		users: createEmptyUsersResponse(),
+		liveUserStats: {},
 		linkTemplates: undefined,
 		inbounds: new Map(),
 		loading: false,
@@ -447,6 +455,7 @@ export const useDashboard = create(
 		qrCodeUsername: null,
 		subscribeUrl: null,
 		users: createEmptyUsersResponse(),
+		liveUserStats: {},
 		loading: true,
 		isUserLimitReached: false,
 		isResetingAllUsage: false,

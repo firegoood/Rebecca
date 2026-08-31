@@ -57,7 +57,10 @@ const formatChipCount = (value: number, locale: string) =>
  * Admins page keeps its own untouched toolbar.
  */
 export const UsersFilterBar: FC = () => {
-	const { loading, filters, onFilterChange, onCreateUser } = useDashboard();
+	const loading = useDashboard((state) => state.loading);
+	const filters = useDashboard((state) => state.filters);
+	const onFilterChange = useDashboard((state) => state.onFilterChange);
+	const onCreateUser = useDashboard((state) => state.onCreateUser);
 	const { t, i18n } = useTranslation();
 	const locale = i18n.language || "en";
 	const [search, setSearch] = useState("");
@@ -82,12 +85,15 @@ export const UsersFilterBar: FC = () => {
 		matchCase: Boolean(filters.matchCase),
 		matchWholeWord: Boolean(filters.matchWholeWord),
 	};
-	const { serviceOptions: rawServiceOptions, fetchServiceOptions } =
-		useServicesStore();
+	const rawServiceOptions = useServicesStore((state) => state.serviceOptions);
+	const fetchServiceOptions = useServicesStore(
+		(state) => state.fetchServiceOptions,
+	);
 	const serviceOptions = Array.isArray(rawServiceOptions)
 		? rawServiceOptions
 		: [];
-	const { adminOptions, fetchAdminOptions } = useAdminsStore();
+	const adminOptions = useAdminsStore((state) => state.adminOptions);
+	const fetchAdminOptions = useAdminsStore((state) => state.fetchAdminOptions);
 	const safeAdminOptions = Array.isArray(adminOptions) ? adminOptions : [];
 
 	const debouncedSearchChange = useMemo(
@@ -198,10 +204,10 @@ export const UsersFilterBar: FC = () => {
 					minW: 0,
 					maxW: { base: "100%", sm: "380px" },
 				}}
-					className="rb-users-search-input"
-					placeholder={t("search")}
-					value={search}
-					onChange={onSearchChange}
+				className="rb-users-search-input"
+				placeholder={t("search")}
+				value={search}
+				onChange={onSearchChange}
 				matchOptions={matchOptions}
 				onMatchOptionsChange={(options) =>
 					onFilterChange({
@@ -212,24 +218,24 @@ export const UsersFilterBar: FC = () => {
 				}
 				isLoading={loading}
 				onClear={clearSearch}
-					borderRadius="full"
-					borderColor="panel.border"
-					bg="panel.elevated"
-					_focusVisible={{
-						borderColor: "primary.400",
-						bg: "panel.surface",
-					}}
+				borderRadius="full"
+				borderColor="panel.border"
+				bg="panel.elevated"
+				_focusVisible={{
+					borderColor: "primary.400",
+					bg: "panel.surface",
+				}}
 				rightElement={
 					<Tooltip label={t("users.searchHelp")} placement="top" hasArrow>
-							<Box
-								display="inline-flex"
-								alignItems="center"
-								color="panel.textMuted"
-								px={1}
-							>
-								<HelpIcon />
-							</Box>
-						</Tooltip>
+						<Box
+							display="inline-flex"
+							alignItems="center"
+							color="panel.textMuted"
+							px={1}
+						>
+							<HelpIcon />
+						</Box>
+					</Tooltip>
 				}
 			/>
 

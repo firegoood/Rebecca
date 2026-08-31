@@ -584,12 +584,6 @@ export const InboundFormModal: FC<Props> = ({
 		() => Object.values(fieldValidationErrors).filter(Boolean),
 		[fieldValidationErrors],
 	);
-	const _hasBlockingErrors = Boolean(
-		tagError ||
-			portError ||
-			streamCompatibilityError ||
-			fieldValidationMessages.length,
-	);
 	const hasBlockingErrorsWithJson = Boolean(
 		tagError ||
 			portError ||
@@ -1499,7 +1493,7 @@ export const InboundFormModal: FC<Props> = ({
 			scrollBehavior="inside"
 			isCentered
 		>
-			<ModalOverlay bg="blackAlpha.400" backdropFilter="blur(8px)" />
+			<ModalOverlay bg="blackAlpha.400" />
 			<XrayModalContent
 				maxW={{ base: "95vw", md: "4xl" }}
 				className="inbound-form-modal"
@@ -1514,6 +1508,8 @@ export const InboundFormModal: FC<Props> = ({
 				<ModalCloseButton />
 				<XrayModalBody>
 					<Tabs
+						isLazy
+						lazyBehavior="keepMounted"
 						className="xray-dialog-auto-sections"
 						variant="unstyled"
 						index={activeTab}

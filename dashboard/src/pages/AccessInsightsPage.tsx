@@ -28,7 +28,14 @@ import {
 } from "components/ui";
 import dayjs from "dayjs";
 import useGetUser from "hooks/useGetUser";
-import { type FC, useCallback, useEffect, useMemo, useState } from "react";
+import {
+	type FC,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { fetch } from "service/http";
 import type {
@@ -73,6 +80,7 @@ const AccessInsightsPage: FC = () => {
 		getUserIsSuccess && Boolean(userData.permissions?.sections.xray);
 	const [data, setData] = useState<AccessInsightsResponse | null>(null);
 	const [search, setSearch] = useState("");
+	const [searchQuery, setSearchQuery] = useState("");
 	const [searchMatch, setSearchMatch] = useState(DEFAULT_SEARCH_MATCH_OPTIONS);
 	const [protocolFilter, setProtocolFilter] = useState("");
 	const [nodeFilter, setNodeFilter] = useState("");
@@ -82,9 +90,13 @@ const AccessInsightsPage: FC = () => {
 	const [error, setError] = useState("");
 	const [selectedClient, setSelectedClient] =
 		useState<AccessInsightClient | null>(null);
+	const requestAbortRef = useRef<AbortController | null>(null);
 
 	const load = useCallback(async () => {
 		if (!canView) return;
+		requestAbortRef.current?.abort();
+		const abortController = new AbortController();
+		requestAbortRef.current = abortController;
 		setLoading(true);
 		setError("");
 		try {
@@ -92,23 +104,39 @@ const AccessInsightsPage: FC = () => {
 				limit: "500",
 				window_seconds: "300",
 			});
-			if (search.trim()) query.set("search", search.trim());
+			if (searchQuery) query.set("search", searchQuery);
 			addSearchMatchQuery(query, searchMatch);
-			setData(
-				await fetch<AccessInsightsResponse>(
-					`/core/access/insights/multi-node?${query.toString()}`,
-				),
+			const response = await fetch<AccessInsightsResponse>(
+				`/core/access/insights/multi-node?${query.toString()}`,
+				{ signal: abortController.signal },
 			);
+			if (!abortController.signal.aborted) setData(response);
 		} catch (requestError: any) {
+			if (abortController.signal.aborted) return;
 			setError(
 				requestError?.data?.detail ||
 					requestError?.message ||
 					t("pages.accessInsights.errors.loadFailed"),
 			);
 		} finally {
-			setLoading(false);
+			if (requestAbortRef.current === abortController) {
+				requestAbortRef.current = null;
+				setLoading(false);
+			}
 		}
-	}, [canView, search, searchMatch, t]);
+	}, [canView, searchQuery, searchMatch, t]);
+
+	useEffect(
+		() => () => {
+			requestAbortRef.current?.abort();
+		},
+		[],
+	);
+
+	useEffect(() => {
+		const timer = window.setTimeout(() => setSearchQuery(search.trim()), 250);
+		return () => window.clearTimeout(timer);
+	}, [search]);
 
 	useEffect(() => {
 		void load();
@@ -116,7 +144,10 @@ const AccessInsightsPage: FC = () => {
 
 	useEffect(() => {
 		if (!autoRefresh || !canView) return;
-		const timer = window.setInterval(() => void load(), REFRESH_INTERVAL);
+		const timer = window.setInterval(() => {
+			if (document.visibilityState === "visible" && navigator.onLine)
+				void load();
+		}, REFRESH_INTERVAL);
 		return () => window.clearInterval(timer);
 	}, [autoRefresh, canView, load]);
 
@@ -447,18 +478,18 @@ const AccessInsightsPage: FC = () => {
 					>
 						<SearchInput
 							containerProps={{ flex: "1" }}
-								value={search}
-								onChange={(event) => {
-									setSearch(event.target.value);
-									setPage(0);
-								}}
-								placeholder={t("pages.accessInsights.liveSearch")}
+							value={search}
+							onChange={(event) => {
+								setSearch(event.target.value);
+								setPage(0);
+							}}
+							placeholder={t("pages.accessInsights.liveSearch")}
 							matchOptions={searchMatch}
 							onMatchOptionsChange={(options) => {
 								setSearchMatch(options);
 								setPage(0);
 							}}
-							/>
+						/>
 						<Select
 							value={protocolFilter}
 							onChange={(event) => {

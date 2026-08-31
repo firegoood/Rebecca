@@ -15,6 +15,7 @@ import {
 	ModalOverlay,
 	Progress,
 	SimpleGrid,
+	Spinner,
 	Stack,
 	Text,
 	useColorMode,
@@ -27,21 +28,33 @@ import {
 import { useDashboard } from "contexts/DashboardContext";
 import useGetUser from "hooks/useGetUser";
 import type { TFunction } from "i18next";
-import { type FC, type ReactNode, useEffect, useMemo, useState } from "react";
-import Chart from "react-apexcharts";
+import {
+	type FC,
+	lazy,
+	type ReactNode,
+	Suspense,
+	useEffect,
+	useMemo,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "react-query";
 import { fetch } from "service/http";
+import { AdminRole } from "types/Admin";
 import type { SystemStats } from "types/System";
 import { formatBytes, numberWithCommas } from "utils/formatByte";
 import { formatDuration } from "utils/formatDuration";
+import {
+	mergeLiveSystemStats,
+	sampleSparklineValues,
+} from "utils/systemMetrics";
 import { getAPIWebSocketURL } from "utils/websocket";
 import { ChartBox } from "./common/ChartBox";
 import { DashboardMaintenanceControls } from "./DashboardMaintenanceControls";
 
 export const StatisticsQueryKey = "statistics-query-key";
 
-import { AdminRole } from "types/Admin";
+const HistoryChart = lazy(() => import("react-apexcharts"));
 
 const iconProps = {
 	baseStyle: {
@@ -78,7 +91,9 @@ const useSystemMetricsStream = (enabled = true) => {
 					if (!stats || typeof stats !== "object" || !("version" in stats)) {
 						return;
 					}
-					queryClient.setQueryData<SystemStats>(StatisticsQueryKey, stats);
+					queryClient.setQueryData<SystemStats>(StatisticsQueryKey, (current) =>
+						mergeLiveSystemStats(current, stats),
+					);
 				} catch (error) {
 					console.error("Unable to parse system metrics stream payload", error);
 				}
@@ -480,7 +495,7 @@ const HistoryModal: FC<{
 
 	return (
 		<Modal isOpen={isOpen} onClose={onClose} size="2xl" scrollBehavior="inside">
-			<ModalOverlay bg="blackAlpha.500" backdropFilter="blur(4px)" />
+			<ModalOverlay bg="blackAlpha.500" />
 			<ModalContent
 				bg="panel.surface"
 				borderWidth="1px"
@@ -537,13 +552,21 @@ const HistoryModal: FC<{
 								},
 							}}
 						>
-							<Chart
-								key={`chart-interval-${intervalSeconds}`}
-								options={options}
-								series={chartSeries}
-								type="area"
-								height={300}
-							/>
+							<Suspense
+								fallback={
+									<Flex h="300px" align="center" justify="center">
+										<Spinner />
+									</Flex>
+								}
+							>
+								<HistoryChart
+									key={`chart-interval-${intervalSeconds}`}
+									options={options}
+									series={chartSeries}
+									type="area"
+									height={300}
+								/>
+							</Suspense>
 						</Box>
 					</Stack>
 				</ModalBody>
@@ -572,38 +595,54 @@ const HistorySparkline: FC<{ values: number[]; accent?: string }> = ({
 	accent,
 }) => {
 	const defaultColor = useColorModeValue("gray.600", "gray.300");
-	const normalized = values.length ? values : [0];
+	const normalized = sampleSparklineValues(values.length ? values : [0]);
 	const maxValue = Math.max(...normalized, 1);
-	const normalizedBars = normalized.map((value, idx) => ({
-		value,
-		id: `${idx}-${value}`,
-	}));
+	const singlePointY = 39 - (Math.max(0, normalized[0]) / maxValue) * 38;
+	const points = normalized
+		.map((value, index) => {
+			const x =
+				normalized.length === 1
+					? 50
+					: (index / (normalized.length - 1)) * 100;
+			const y = 39 - (Math.max(0, value) / maxValue) * 38;
+			return `${x.toFixed(2)},${y.toFixed(2)}`;
+		})
+		.join(" ");
 
 	return (
-		<HStack
-			alignItems="flex-end"
-			spacing="3px"
+		<Box
+			as="svg"
+			viewBox="0 0 100 40"
+			preserveAspectRatio="none"
 			mt={3}
-			minH="42px"
+			h="42px"
 			w="full"
-			overflow="hidden"
+			color={accent ?? defaultColor}
+			aria-hidden="true"
 		>
-			{normalizedBars.map(({ value, id }) => {
-				const heightPct = maxValue > 0 ? (value / maxValue) * 100 : 0;
-				const height = Math.max(4, Math.round((heightPct / 100) * 40));
-				return (
-					<Box
-						key={id}
-						flex="1 1 0"
-						minW="2px"
-						maxW="6px"
-						h={`${height}px`}
-						bg={accent ?? defaultColor}
-						borderRadius="full"
-					/>
-				);
-			})}
-		</HStack>
+			{normalized.length === 1 ? (
+				<line
+					x1="42"
+					x2="58"
+					y1={singlePointY}
+					y2={singlePointY}
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					vectorEffect="non-scaling-stroke"
+				/>
+			) : (
+				<polyline
+					points={points}
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+					vectorEffect="non-scaling-stroke"
+				/>
+			)}
+		</Box>
 	);
 };
 

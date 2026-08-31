@@ -22,19 +22,36 @@ import { AppDialog } from "components/dialogs/AppDialog";
 import { ReloadIcon } from "components/Filters";
 import { Icon } from "components/Icon";
 import { Pagination } from "components/Pagination";
-import { QRCodeDialog } from "components/QRCodeDialog";
-import { UserDialog } from "components/UserDialog";
 import { UsersTable } from "components/UsersTable";
 import { PageHeader, ResourceRefreshButton } from "components/ui";
-import { UsersFilterBar, UserQuickEditModal } from "components/users";
+import { UsersFilterBar } from "components/users";
 import { fetchInbounds, useDashboard } from "contexts/DashboardContext";
 import useGetUser from "hooks/useGetUser";
-import { type FC, useCallback, useEffect, useRef, useState } from "react";
+import {
+	type FC,
+	lazy,
+	Suspense,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { fetch } from "service/http";
 import { AdminStatus } from "types/Admin";
 
 const AUTO_REFRESH_INTERVALS = [3_000, 5_000, 10_000, 30_000] as const;
+
+const UserDialog = lazy(async () => ({
+	default: (await import("components/UserDialog")).UserDialog,
+}));
+const QRCodeDialog = lazy(async () => ({
+	default: (await import("components/QRCodeDialog")).QRCodeDialog,
+}));
+const UserQuickEditModal = lazy(async () => ({
+	default: (await import("components/users/UserQuickEditModal"))
+		.UserQuickEditModal,
+}));
 
 type OnlineUsersResponse =
 	| string[]
@@ -59,7 +76,14 @@ const UserActionDialog: FC<{ action: "reset" | "revoke" }> = ({ action }) => {
 		revokeSubscriptionUser,
 		resetDataUsage,
 		revokeSubscription,
-	} = useDashboard();
+	} = {
+		resetUsageUser: useDashboard((state) => state.resetUsageUser),
+		revokeSubscriptionUser: useDashboard(
+			(state) => state.revokeSubscriptionUser,
+		),
+		resetDataUsage: useDashboard((state) => state.resetDataUsage),
+		revokeSubscription: useDashboard((state) => state.revokeSubscription),
+	};
 	const [loading, setLoading] = useState(false);
 	const user = action === "reset" ? resetUsageUser : revokeSubscriptionUser;
 	const isRevoke = action === "revoke";
@@ -111,7 +135,7 @@ const UserActionDialog: FC<{ action: "reset" | "revoke" }> = ({ action }) => {
 					<ResetIcon />
 				</Icon>
 			}
-			overlayProps={{ bg: "blackAlpha.300", backdropFilter: "blur(10px)" }}
+			overlayProps={{ bg: "blackAlpha.300" }}
 			contentProps={{ mx: "3" }}
 			headerProps={{ pt: 6 }}
 			closeButtonProps={{ mt: 3 }}
@@ -157,16 +181,44 @@ const UserActionDialog: FC<{ action: "reset" | "revoke" }> = ({ action }) => {
 export const UsersPage: FC = () => {
 	const { t, i18n } = useTranslation();
 	const isRTL = i18n.dir(i18n.language) === "rtl";
-	const { loading, refetchUsers } = useDashboard();
+	const loading = useDashboard((state) => state.loading);
+	const refetchUsers = useDashboard((state) => state.refetchUsers);
+	const isUserDialogOpen = useDashboard(
+		(state) => state.isCreatingNewUser || Boolean(state.editingUser),
+	);
+	const isQRCodeDialogOpen = useDashboard(
+		(state) => state.QRcodeLinks !== null,
+	);
+	const isQuickEditOpen = useDashboard((state) => state.quickEditUser !== null);
 	const { userData, getUserIsPending } = useGetUser();
 	const isAdminDisabled = userData.status === AdminStatus.Disabled;
 	const [autoRefreshInterval, setAutoRefreshInterval] = useState(5_000);
 	const topSpeedUsernameRef = useRef<string | undefined>(undefined);
+	const onlineRefreshInFlightRef = useRef(false);
 
 	const refreshOnlineUsers = useCallback(async () => {
+		if (
+			onlineRefreshInFlightRef.current ||
+			document.visibilityState === "hidden" ||
+			!navigator.onLine
+		) {
+			return;
+		}
+		onlineRefreshInFlightRef.current = true;
 		try {
+			const dashboard = useDashboard.getState();
+			const needsGlobalSpeeds = dashboard.filters.advancedFilters?.includes(
+				"top_speed",
+			);
+			const visibleUsernames = dashboard.users.users.map(
+				(user) => user.username,
+			);
+			if (!needsGlobalSpeeds && visibleUsernames.length === 0) return;
 			const response = await fetch<OnlineUsersResponse>("/users/onlines", {
-				query: { details: true },
+				query: {
+					details: true,
+					usernames: needsGlobalSpeeds ? undefined : visibleUsernames.join(","),
+				},
 			});
 			const usernames = Array.isArray(response) ? response : response.users;
 			const speeds = Array.isArray(response) ? {} : response.speeds;
@@ -182,21 +234,22 @@ export const UsersPage: FC = () => {
 			}
 			const previousTopSpeedUsername = topSpeedUsernameRef.current;
 			topSpeedUsernameRef.current = topSpeedUsername;
-			useDashboard.setState((state) => ({
-				users: {
-					...state.users,
-					online_total: usernames.length,
-					users: state.users.users.map((user) => {
+			useDashboard.setState((state) => {
+				const liveUserStats = Object.fromEntries(
+					state.users.users.map((user) => {
 						const speed = speeds[user.username];
-						return {
-							...user,
-							is_online: online.has(user.username),
-							upload_speed: speed?.upload_speed ?? user.upload_speed,
-							download_speed: speed?.download_speed ?? user.download_speed,
-						};
+						return [
+							user.username,
+							{
+								is_online: online.has(user.username),
+								upload_speed: speed?.upload_speed ?? 0,
+								download_speed: speed?.download_speed ?? 0,
+							},
+						];
 					}),
-				},
-			}));
+				);
+				return { liveUserStats };
+			});
 			const state = useDashboard.getState();
 			if (
 				previousTopSpeedUsername !== undefined &&
@@ -207,6 +260,8 @@ export const UsersPage: FC = () => {
 			}
 		} catch {
 			// Keep the last successful snapshot during a transient poll failure.
+		} finally {
+			onlineRefreshInFlightRef.current = false;
 		}
 	}, []);
 
@@ -224,6 +279,26 @@ export const UsersPage: FC = () => {
 			autoRefreshInterval,
 		);
 		return () => window.clearInterval(timer);
+	}, [
+		autoRefreshInterval,
+		getUserIsPending,
+		isAdminDisabled,
+		refreshOnlineUsers,
+	]);
+
+	useEffect(() => {
+		if (getUserIsPending || isAdminDisabled || !autoRefreshInterval) return;
+		const refreshWhenActive = () => {
+			if (document.visibilityState === "visible" && navigator.onLine) {
+				void refreshOnlineUsers();
+			}
+		};
+		document.addEventListener("visibilitychange", refreshWhenActive);
+		window.addEventListener("online", refreshWhenActive);
+		return () => {
+			document.removeEventListener("visibilitychange", refreshWhenActive);
+			window.removeEventListener("online", refreshWhenActive);
+		};
 	}, [
 		autoRefreshInterval,
 		getUserIsPending,
@@ -344,11 +419,23 @@ export const UsersPage: FC = () => {
 				}
 			/>
 			<Pagination />
-			<UserDialog />
-			<QRCodeDialog />
+			{isUserDialogOpen && (
+				<Suspense fallback={null}>
+					<UserDialog />
+				</Suspense>
+			)}
+			{isQRCodeDialogOpen && (
+				<Suspense fallback={null}>
+					<QRCodeDialog />
+				</Suspense>
+			)}
 			<UserActionDialog action="reset" />
 			<UserActionDialog action="revoke" />
-			<UserQuickEditModal />
+			{isQuickEditOpen && (
+				<Suspense fallback={null}>
+					<UserQuickEditModal />
+				</Suspense>
+			)}
 		</VStack>
 	);
 };
