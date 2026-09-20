@@ -23,7 +23,7 @@ func apiRequestBodyLimit(path string) int64 {
 	if strings.HasPrefix(path, phpMyAdminEmbedPath) {
 		return maxPHPMyAdminRequestBodyBytes
 	}
-	if path == "/api/settings/external-apps/archive" || path == "/api/settings/external-apps/mirzabot" ||
+	if path == "/api/settings/external-apps/archive" || path == "/api/settings/external-apps/mirzabot" || path == "/api/settings/external-apps/faoxima" ||
 		(strings.HasPrefix(path, "/api/settings/external-apps/") && strings.HasSuffix(path, "/files/upload")) {
 		return externalapps.MaxRequestBodyBytes
 	}
@@ -158,9 +158,12 @@ func (s *Server) registerInboundHostRoutes(r chi.Router) {
 }
 
 func (s *Server) registerSystemRoutes(r chi.Router) {
+	r.HandleFunc("/sponsor/assets/*", s.requireAdmin(s.handleSponsorAsset))
+	r.HandleFunc("/sponsor", s.requireAdmin(s.handleSponsor))
 	r.HandleFunc("/system/metrics", s.requireAdmin(s.handleSystemMetricsWebSocket))
 	r.HandleFunc("/system", s.requireAdmin(s.handleSystemStats))
 	r.HandleFunc("/maintenance/info", s.requireSudo(s.handleMaintenanceInfo))
+	r.HandleFunc("/maintenance/builds", s.requireSudo(s.handleMaintenanceBuilds))
 	r.HandleFunc("/maintenance/status", s.requireSudo(s.handleMaintenanceStatus))
 	r.HandleFunc("/maintenance/update", s.requireSudo(s.handleMaintenanceUpdate))
 	r.HandleFunc("/maintenance/restart", s.requireSudo(s.handleMaintenanceRestart))
@@ -216,6 +219,7 @@ func (s *Server) registerPanelXrayRoutes(r chi.Router) {
 	r.HandleFunc("/panel/xray/psiphon/locations", s.requireSudo(s.handlePsiphonLocations))
 	r.HandleFunc("/panel/xray/psiphon/setup", s.requireSudo(s.handlePsiphonSetup))
 	r.HandleFunc("/panel/xray/testOutbound", s.requireSudo(s.handleOutboundTest))
+	r.HandleFunc("/panel/xray/outboundHealth", s.requireSudo(s.handleOutboundHealth))
 	r.HandleFunc("/panel/xray/testOutbounds", s.requireSudo(s.handleOutboundTests))
 	r.HandleFunc("/panel/xray/routeTest", s.requireSudo(s.handleRouteTest))
 	r.HandleFunc("/panel/xray/getOutboundsTraffic", s.requireSudo(s.handleOutboundsTraffic))
