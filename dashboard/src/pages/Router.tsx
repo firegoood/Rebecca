@@ -55,6 +55,8 @@ const TutorialsPage = lazy(async () => ({
 }));
 const UsagePage = lazy(() => import("./UsagePage"));
 const XrayLogsPage = lazy(() => import("./XrayLogsPage"));
+const ErrorsPage = lazy(() => import("./ErrorsPage"));
+const NotificationsPage = lazy(() => import("./NotificationsPage"));
 
 const PageLoading = () => <PageLoadingSkeleton />;
 
@@ -126,6 +128,8 @@ const routeSegments = new Set([
 	"settings",
 	"xray-settings",
 	"xray-logs",
+	"errors",
+	"notifications",
 	"access-insights",
 	"api-docs",
 	"phpmyadmin",
@@ -170,9 +174,34 @@ const normalizeLegacyHashRoute = (basename: string) => {
 const dashboardBasename = getDashboardBasename();
 normalizeLegacyHashRoute(dashboardBasename);
 
+const SESSION_CHECK_RETRY_DELAY_MS = 1500;
+const SESSION_CHECK_MAX_ATTEMPTS = 40;
+
+const fetchSessionWithRetry = async () => {
+	for (let attempt = 1; ; attempt += 1) {
+		try {
+			return await fetch<{ state?: string }>("/auth/session");
+		} catch (error) {
+			const status =
+				(error as { response?: { status?: number }; status?: number })?.response
+					?.status ?? (error as { status?: number })?.status;
+			if (
+				status === 401 ||
+				status === 403 ||
+				attempt >= SESSION_CHECK_MAX_ATTEMPTS
+			) {
+				throw error;
+			}
+			await new Promise((resolve) =>
+				setTimeout(resolve, SESSION_CHECK_RETRY_DELAY_MS),
+			);
+		}
+	}
+};
+
 const fetchAdminLoader = async ({ request }: { request: Request }) => {
 	try {
-		const response = await fetch<{ state?: string }>("/auth/session");
+		const response = await fetchSessionWithRetry();
 		if (response?.state === "disabled") {
 			const pathname = new URL(request.url).pathname.replace(/\/+$/, "");
 			if (!pathname.endsWith("/users")) throw redirect("/users/");
@@ -267,6 +296,14 @@ export const router = createBrowserRouter(
 				{
 					path: "xray-logs",
 					element: <LazyPage Page={XrayLogsPage} />,
+				},
+				{
+					path: "errors",
+					element: <LazyPage Page={ErrorsPage} />,
+				},
+				{
+					path: "notifications",
+					element: <LazyPage Page={NotificationsPage} />,
 				},
 				{
 					path: "access-insights",

@@ -86,7 +86,7 @@ export const SponsorCarousel: FC<SponsorCarouselProps> = ({
 				isBanner
 					? { base: "4 / 1", md: "8 / 1" }
 					: isSidebarBanner
-						? "21 / 17"
+						? { base: "21 / 8.5", md: "21 / 17" }
 						: undefined
 			}
 			onMouseEnter={() => setPaused(true)}

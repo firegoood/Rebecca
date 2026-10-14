@@ -13,6 +13,7 @@ import {
 	BoltIcon,
 	BookOpenIcon,
 	BriefcaseIcon,
+	ChevronDownIcon,
 	ChartBarIcon,
 	CircleStackIcon,
 	ClockIcon,
@@ -21,6 +22,7 @@ import {
 	Cog8ToothIcon,
 	CommandLineIcon,
 	DocumentDuplicateIcon,
+	BellIcon,
 	DocumentTextIcon,
 	EyeIcon,
 	HomeIcon,
@@ -72,6 +74,7 @@ const HostsIconStyled = chakra(LinkIcon, iconProps);
 const HAProxyIconStyled = chakra(ArrowsRightLeftIcon, iconProps);
 const UsageIconStyled = chakra(ChartBarIcon, iconProps);
 const MyAccountIconStyled = chakra(UserCircleIcon, iconProps);
+const NotificationIconStyled = chakra(BellIcon, iconProps);
 const InsightsIconStyled = chakra(EyeIcon, iconProps);
 const TutorialIconStyled = chakra(BookOpenIcon, iconProps);
 const XraySettingsIconStyled = chakra(WrenchScrewdriverIcon, iconProps);
@@ -166,6 +169,7 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 		(userData.role === AdminRole.Sudo &&
 			Boolean(userData.permissions?.sudo?.[AdminSudoScope.Subscriptions])) ||
 		Boolean(baseSelf.self_placeholders);
+	const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 	const [hasNewTutorials, setHasNewTutorials] = useState(false);
 
 	const checkTutorialUpdates = useCallback(async () => {
@@ -202,6 +206,13 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 	}, [checkTutorialUpdates]);
 
 	const baseSettingsSubItems: SidebarSubItems = [
+		isPrivilegedAdmin
+			? {
+					title: "errors",
+					url: "/errors",
+					icon: InsightsIconStyled,
+				}
+			: null,
 		sectionAccess?.[AdminSection.Hosts]
 			? {
 					title: t("header.hostSettings"),
@@ -345,6 +356,12 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 		});
 	}
 
+	items.push({
+		title: t("notifications.menu"),
+		url: "/notifications",
+		icon: NotificationIconStyled,
+	});
+
 	if (canViewUsage) {
 		items.push({
 			title: t("usage.menu"),
@@ -399,6 +416,7 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 				pickDirect("/admins"),
 				pickDirect("/usage"),
 				pickDirect("/myaccount"),
+				pickDirect("/notifications"),
 			],
 		},
 		{
@@ -408,6 +426,7 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 				pickSetting("/xray-settings"),
 				pickSetting("/haproxy"),
 				pickSetting("/xray-logs"),
+				pickSetting("/errors"),
 				pickSetting("/access-insights"),
 				pickSetting("/recent-actions"),
 				pickSetting("/phpmyadmin"),
@@ -423,6 +442,13 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 	}));
 
 	const isRTL = i18n.dir(currentLanguage) === "rtl";
+	const isItemActive = (url: string) =>
+		location.pathname === url ||
+		(url !== "/" && location.pathname.startsWith(url));
+	const groupIsOpen = (group: (typeof compactGroups)[number]) =>
+		openGroups[group.title] ??
+		(group.items.length <= 4 ||
+			group.items.some((item) => isItemActive(item.url as string)));
 	const sponsorItems: SponsorCarouselItem[] = [
 		{
 			id: "rebecca",
@@ -482,9 +508,9 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 						borderColor={sidebarPanelBorder}
 						borderRadius="md"
 						bg={sidebarPanelBg}
-						mb={5}
-						px={collapsed ? 2 : 3}
-						py={collapsed ? 2 : 3}
+						mb={3}
+						px={2}
+						py={collapsed ? 1.5 : 2}
 					>
 						<SponsorCarousel
 							items={sponsorItems}
@@ -492,9 +518,10 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 							collapsed={collapsed}
 						/>
 					</Box>
-					<VStack align="stretch" spacing={4}>
+					<VStack align="stretch" spacing={collapsed ? 1 : 2}>
 						{compactGroups.map((group) => {
 							if (group.items.length === 0) return null;
+							const isOpen = collapsed || groupIsOpen(group);
 
 							return (
 								<Box key={group.title}>
@@ -506,25 +533,51 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 											mx={2}
 										/>
 									) : (
-										<Text
+										<HStack
+											as="button"
+											type="button"
+											w="full"
 											px={3}
-											mb={2}
-											fontSize="11px"
-											fontWeight="700"
+											py={1}
+											mb={1}
+											justify="space-between"
 											color="panel.textMuted"
-											textTransform="uppercase"
+											borderRadius="4px"
+											_hover={{ color: "panel.text" }}
+											aria-expanded={isOpen}
+											onClick={() =>
+												setOpenGroups((prev) => ({
+													...prev,
+													[group.title]: !isOpen,
+												}))
+											}
 										>
-											{group.title}
-										</Text>
+											<Text
+												fontSize="11px"
+												fontWeight="700"
+												textTransform="uppercase"
+											>
+												{group.title}
+											</Text>
+											<ChevronDownIcon
+												width={14}
+												height={14}
+												style={{
+													transform: isOpen ? undefined : "rotate(-90deg)",
+													transition: "transform 0.15s ease",
+												}}
+											/>
+										</HStack>
 									)}
-									<VStack align="stretch" spacing={1}>
+									<VStack
+										align="stretch"
+										spacing={0.5}
+										display={isOpen ? "flex" : "none"}
+									>
 										{group.items.map((item) => {
 											if (!item.url) return null;
 											const itemUrl = item.url;
-											const isActive =
-												location.pathname === itemUrl ||
-												(itemUrl !== "/" &&
-													location.pathname.startsWith(itemUrl));
+											const isActive = isItemActive(itemUrl);
 											const Icon = item.icon;
 											const showTutorialBadge =
 												itemUrl === tutorialsUrl && hasNewTutorials;
@@ -538,8 +591,8 @@ export const AppSidebar: FC<AppSidebarProps> = ({
 													<HStack
 														spacing={3}
 														px={collapsed ? 2 : 3}
-														py={2}
-														minH="40px"
+														py={1.5}
+														minH={{ base: "44px", md: "36px" }}
 														borderRadius="4px"
 														cursor="pointer"
 														bg={isActive ? activeItemBg : "transparent"}

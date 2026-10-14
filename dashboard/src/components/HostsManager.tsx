@@ -86,6 +86,8 @@ import {
 	sanitizeFinalMask,
 } from "utils/finalmask";
 import { getHostFormFields } from "utils/hostFormFields";
+import { hostClientSettingsError, parseHostClientSettings } from "utils/hostClientSettings";
+import { HostClientSettingsEditor } from "./HostClientSettingsEditor";
 import {
 	DEFAULT_SEARCH_MATCH_OPTIONS,
 	matchesAnySearch,
@@ -148,6 +150,7 @@ type HostData = {
 	fragment_setting: string;
 	noise_setting: string;
 	finalmask: FinalMaskObject | null;
+	client_settings: string;
 	random_user_agent: boolean;
 	security: string;
 	alpn: string;
@@ -222,6 +225,9 @@ const coerceHostValue = <Key extends keyof HostData>(
 					: currentData.finalmask
 		) as HostData[Key];
 	}
+	if (key === "client_settings") {
+		return (typeof value === "string" ? value : JSON.stringify(value ?? {}, null, 2)) as HostData[Key];
+	}
 	return (value ?? "") as HostData[Key];
 };
 
@@ -250,6 +256,7 @@ const EMPTY_HOST_DATA: HostData = {
 	fragment_setting: "",
 	noise_setting: "",
 	finalmask: null,
+	client_settings: "{}",
 	random_user_agent: false,
 	security: "inbound_default",
 	alpn: "",
@@ -278,6 +285,7 @@ type InboundOption = {
 	flow?: string;
 	proxyNetwork?: string;
 	port?: number;
+	validationError?: string;
 };
 
 const profileHostNameError = (protocol: string | undefined, value: string) => {
@@ -331,6 +339,7 @@ const DYNAMIC_TOKENS: Array<{ token: string; labelKey: string }> = [
 	{ token: "{SERVER_IP}", labelKey: "hostsDialog.currentServer" },
 	{ token: "{SERVER_IPV6}", labelKey: "hostsDialog.currentServerv6" },
 	{ token: "{USERNAME}", labelKey: "hostsDialog.username" },
+	{ token: "{user_id}", labelKey: "hostsDialog.userId" },
 	{ token: "{DATA_USAGE}", labelKey: "hostsDialog.dataUsage" },
 	{ token: "{DATA_LEFT}", labelKey: "hostsDialog.remainingData" },
 	{ token: "{DATA_LIMIT}", labelKey: "hostsDialog.dataLimit" },
@@ -639,6 +648,7 @@ const normalizeHostData = (host: HostsSchema[string][number]): HostData => ({
 		normalizeString(host.fragment_setting),
 		normalizeString(host.noise_setting),
 	),
+	client_settings: JSON.stringify(host.client_settings ?? {}, null, 2),
 	random_user_agent: normalizeBoolean(host.random_user_agent),
 	security: host.security ?? "inbound_default",
 	alpn: host.alpn ?? "",
@@ -673,6 +683,7 @@ const cloneHostData = (data: HostData): HostData => ({
 	fragment_setting: data.fragment_setting,
 	noise_setting: data.noise_setting,
 	finalmask: cloneFinalMask(data.finalmask),
+	client_settings: data.client_settings,
 	random_user_agent: data.random_user_agent,
 	security: data.security,
 	alpn: data.alpn,
@@ -684,6 +695,7 @@ const cloneHostData = (data: HostData): HostData => ({
 
 const serializeHostData = (data: HostData) => ({
 	...data,
+	client_settings: hostClientSettingsError(data.client_settings) ? data.client_settings : parseHostClientSettings(data.client_settings),
 	id: data.id ?? null,
 	port: data.port ?? null,
 	path: normalizeString(data.path),
@@ -740,6 +752,8 @@ const validateHostState = (
 			"Certificate pins must be comma-separated SHA-256 fingerprints.",
 		);
 	}
+	const clientSettingsError = hostClientSettingsError(data.client_settings);
+	if (clientSettingsError) errors.push(clientSettingsError);
 	for (const [label, mode, ttl] of [
 		["Address", data.address_selection_mode, data.address_ttl_seconds],
 		["SNI", data.sni_selection_mode, data.sni_ttl_seconds],
@@ -809,6 +823,7 @@ const formatHostForApi = (
 		fragment_setting: null,
 		noise_setting: null,
 		finalmask: cloneFinalMask(data.finalmask),
+		client_settings: parseHostClientSettings(data.client_settings),
 		random_user_agent: data.random_user_agent,
 		security: data.security || "inbound_default",
 		alpn: data.alpn || "",
@@ -1439,6 +1454,11 @@ const HostForm: FC<HostFormProps> = ({
 					</VStack>
 				</HostAdvancedSection>
 			)}
+			{supportsStreamSecurity && (
+				<HostAdvancedSection title={t("hostsDialog.clientSettings")} description={t("hostsDialog.clientSettingsHint")}>
+					<HostClientSettingsEditor value={data.client_settings} onChange={(value) => onChange("client_settings", value)} usesTLS={usesTLS} protocol={selectedInbound?.protocol} network={selectedInbound?.network} />
+				</HostAdvancedSection>
+			)}
 		</Stack>
 	);
 };
@@ -1510,6 +1530,7 @@ const HostDetailModal: FC<HostDetailModalProps> = ({
 					host.data.remark.trim() &&
 					!remarkError &&
 					finalMaskValid &&
+					!hostClientSettingsError(host.data.client_settings) &&
 					(host.data.address.trim() ||
 						rotationTextToOptions(host.data.address_options).length > 0) &&
 					(!isWireGuardInbound ||
@@ -1825,6 +1846,7 @@ const CreateHostModal: FC<CreateHostModalProps> = ({
 		if (
 			jsonError ||
 			!finalMaskValid ||
+			hostClientSettingsError(formState.client_settings) ||
 			!certificatePinsValid(formState.pinned_peer_cert_sha256) ||
 			!formState.inboundTag ||
 			!formState.remark.trim() ||
@@ -1909,6 +1931,7 @@ const CreateHostModal: FC<CreateHostModalProps> = ({
 						isDisabled={
 							Boolean(jsonError) ||
 							!finalMaskValid ||
+							Boolean(hostClientSettingsError(formState.client_settings)) ||
 							!certificatePinsValid(formState.pinned_peer_cert_sha256) ||
 							!formState.inboundTag ||
 							!formState.remark.trim() ||
@@ -2045,6 +2068,7 @@ export const HostsManager: FC = () => {
 							? inbound.settings.network
 							: undefined,
 					port: inbound.port,
+					validationError: (inbound as { validation_error?: string }).validation_error,
 				});
 			});
 		});
@@ -2717,6 +2741,11 @@ export const HostsManager: FC = () => {
 							<Text fontWeight="semibold" noOfLines={1}>
 								{host.inboundTag}
 							</Text>
+							{(!inbound || inbound.validationError) && (
+								<Tooltip label={inbound?.validationError || t("diagnostics.missingInbound", { tag: host.inboundTag })} hasArrow>
+									<Tag size="sm" colorScheme="red" w="fit-content">{t("diagnostics.broken")}</Tag>
+								</Tooltip>
+							)}
 							<Text fontSize="xs" color="panel.textMuted" noOfLines={1}>
 								{inbound
 									? `${inbound.protocol.toUpperCase()} / ${inbound.network}`

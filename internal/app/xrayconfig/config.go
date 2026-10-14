@@ -193,6 +193,8 @@ func NormalizePayloadForXrayVersion(payload map[string]any, coreVersion string) 
 	atLeast26327, _ := xrayVersionAtLeast(coreVersion, 26, 3, 27)
 	atLeast2661, _ := xrayVersionAtLeast(coreVersion, 26, 6, 1)
 	atLeast26622, _ := xrayVersionAtLeast(coreVersion, 26, 6, 22)
+	atLeast26930, _ := xrayVersionAtLeast(coreVersion, 26, 9, 30)
+	atLeast261010, _ := xrayVersionAtLeast(coreVersion, 26, 10, 10)
 	useSessionIDFields := atLeast26622
 	skippedLocalOSRules := 0
 	if !atLeast2698 {
@@ -231,13 +233,22 @@ func NormalizePayloadForXrayVersion(payload map[string]any, coreVersion string) 
 	incompatibleHopTags := make([]string, 0)
 	unsupportedRemoteDNSTags := make([]string, 0)
 	unsupportedCustomResponseTags := make([]string, 0)
+	unsupportedWireGuardDNSTags := make([]string, 0)
+	xdnsAdaptedTags := make([]string, 0)
 	vlessEncryptionTags := append(vlessEncryptionEndpointTags(inbounds), vlessEncryptionEndpointTags(outbounds)...)
 	vlessDefaultFlowTags := vlessDefaultFlowEndpointTags(inbounds)
 	for index, inbound := range inbounds {
+		inheritVLESSInboundFlow(inbound)
+		if knownVersion && !atLeast25829 && strings.EqualFold(stringValue(inbound["protocol"]), "vless") {
+			delete(mapValue(inbound["settings"]), "flow")
+		}
 		stream := mapValue(inbound["streamSettings"])
 		normalizeStreamForXrayVersion(stream, atLeast26711, useSessionIDFields, knownVersion)
 		invalidPin, versionSensitive := normalizeTLSFieldsForXrayVersion(stream, atLeast26131, knownVersion)
 		label := configEndpointLabel(inbound, index)
+		if atLeast26930 && normalizeXDNSFinalMaskForXrayVersion(stream, true, atLeast261010) {
+			xdnsAdaptedTags = append(xdnsAdaptedTags, label)
+		}
 		if invalidPin {
 			invalidPinTags = append(invalidPinTags, label)
 		}
@@ -280,6 +291,14 @@ func NormalizePayloadForXrayVersion(payload map[string]any, coreVersion string) 
 				delete(settings, "remoteDNS")
 				unsupportedRemoteDNSTags = append(unsupportedRemoteDNSTags, label)
 			}
+		}
+		if atLeast26930 && strings.EqualFold(stringValue(outbound["protocol"]), "wireguard") {
+			if dropUnsupportedWireGuardRemoteDNS(mapValue(outbound["settings"])) {
+				unsupportedWireGuardDNSTags = append(unsupportedWireGuardDNSTags, label)
+			}
+		}
+		if atLeast26930 && normalizeXDNSFinalMaskForXrayVersion(stream, false, atLeast261010) {
+			xdnsAdaptedTags = append(xdnsAdaptedTags, label)
 		}
 		if !atLeast2698 && strings.EqualFold(stringValue(outbound["protocol"]), "blackhole") {
 			response := mapValue(mapValue(outbound["settings"])["response"])
@@ -355,6 +374,16 @@ func NormalizePayloadForXrayVersion(payload map[string]any, coreVersion string) 
 	if len(unsupportedRemoteDNSTags) > 0 {
 		warnings = append(warnings, fmt.Sprintf("WireGuard remoteDNS requires Xray 26.9.8+ and was omitted on this node for: %s", strings.Join(unsupportedRemoteDNSTags, ", ")))
 	}
+	if len(unsupportedWireGuardDNSTags) > 0 {
+		warnings = append(warnings, fmt.Sprintf("WireGuard remoteDNS accepts only IP addresses on Xray 26.9.30+; other entries were omitted on this node for: %s", strings.Join(unsupportedWireGuardDNSTags, ", ")))
+	}
+	if len(xdnsAdaptedTags) > 0 {
+		schema := "26.9.30+"
+		if atLeast261010 {
+			schema = "26.10.10+"
+		}
+		warnings = append(warnings, fmt.Sprintf("XDNS FinalMask was adapted to the Xray %s schema on this node for: %s", schema, strings.Join(xdnsAdaptedTags, ", ")))
+	}
 	if len(unsupportedCustomResponseTags) > 0 {
 		warnings = append(warnings, fmt.Sprintf("Custom blackhole responses require Xray 26.9.8+ and were disabled on this node for: %s", strings.Join(unsupportedCustomResponseTags, ", ")))
 	}
@@ -409,7 +438,7 @@ func NormalizePayloadForXrayVersion(payload map[string]any, coreVersion string) 
 		case !knownVersion:
 			warnings = append(warnings, fmt.Sprintf("Xray core version is unknown; VLESS inbound default flow support starts at 25.8.29 and settings were preserved for: %s", strings.Join(vlessDefaultFlowTags, ", ")))
 		case !atLeast25829:
-			warnings = append(warnings, fmt.Sprintf("Xray before 25.8.29 does not support VLESS inbound default flow; settings were preserved without downgrade for: %s", strings.Join(vlessDefaultFlowTags, ", ")))
+			warnings = append(warnings, fmt.Sprintf("Xray before 25.8.29: VLESS inbound flow was applied explicitly to accounts instead of settings.flow for: %s", strings.Join(vlessDefaultFlowTags, ", ")))
 		}
 	}
 	if atLeast26711 {
@@ -1114,6 +1143,34 @@ func vlessDefaultFlowEndpointTags(inbounds []map[string]any) []string {
 	return tags
 }
 
+func inheritVLESSInboundFlow(inbound map[string]any) {
+	if !strings.EqualFold(stringValue(inbound["protocol"]), "vless") {
+		return
+	}
+	settings := mapValue(inbound["settings"])
+	flow := stringValue(settings["flow"])
+	if flow == "" {
+		return
+	}
+	for _, client := range listOfMaps(settings["clients"]) {
+		if stringValue(client["flow"]) == "" {
+			client["flow"] = flow
+		}
+	}
+}
+
+func VLESSFlowSupported(inbound map[string]any) bool {
+	settings := mapValue(inbound["settings"])
+	if vlessEncryptionEnabled(settings["decryption"]) {
+		return true
+	}
+	stream := mapValue(inbound["streamSettings"])
+	network := streamNetwork(stream)
+	security := strings.ToLower(stringValue(stream["security"]))
+	headerType := strings.ToLower(stringValue(mapValue(mapValue(stream[networkSettingsKey(network)])["header"])["type"]))
+	return (security == "tls" || security == "reality") && (network == "tcp" || network == "raw") && headerType != "http"
+}
+
 func isXrayPublicDestination(value string) bool {
 	return strings.TrimSpace(value) != "" && !isXrayPrivateDestination(value)
 }
@@ -1239,6 +1296,180 @@ func firstXHTTPAliasValue(settings map[string]any, current, legacy string) (any,
 		return value, true
 	}
 	return nil, false
+}
+
+func dropUnsupportedWireGuardRemoteDNS(settings map[string]any) bool {
+	if _, exists := settings["remoteDNS"]; !exists {
+		return false
+	}
+	entries := stringList(settings["remoteDNS"])
+	kept := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if _, err := netip.ParseAddr(strings.TrimSpace(entry)); err == nil {
+			kept = append(kept, entry)
+		}
+	}
+	if len(kept) == len(entries) {
+		return false
+	}
+	if len(kept) == 0 {
+		delete(settings, "remoteDNS")
+	} else {
+		settings["remoteDNS"] = kept
+	}
+	return true
+}
+
+func normalizeXDNSFinalMaskForXrayVersion(stream map[string]any, inbound bool, namedSchema bool) bool {
+	changed := false
+	for _, mask := range listOfMaps(mapValue(stream["finalmask"])["udp"]) {
+		if !strings.EqualFold(stringValue(mask["type"]), "xdns") {
+			continue
+		}
+		settings := mapValue(mask["settings"])
+		domains, domainsOK := legacyXDNSStrings(settings["domains"])
+		resolvers, resolversOK := legacyXDNSStrings(settings["resolvers"])
+		if !domainsOK || !resolversOK {
+			continue
+		}
+		var nextDomains []any
+		ok := true
+		if inbound {
+			if len(domains) == 0 {
+				continue
+			}
+			nextDomains, ok = legacyXDNSServerDomains(domains, namedSchema)
+		} else {
+			if len(resolvers) == 0 {
+				continue
+			}
+			nextDomains, ok = legacyXDNSClientDomains(resolvers, namedSchema)
+		}
+		if !ok {
+			continue
+		}
+		nextResolvers, ok := legacyXDNSResolvers(resolvers, namedSchema)
+		if !ok {
+			continue
+		}
+		settings["domains"] = nextDomains
+		if len(nextResolvers) > 0 {
+			settings["resolvers"] = nextResolvers
+		}
+		changed = true
+	}
+	return changed
+}
+
+func legacyXDNSStrings(value any) ([]string, bool) {
+	switch typed := value.(type) {
+	case nil:
+		return nil, true
+	case []string:
+		return typed, true
+	case []any:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text, ok := item.(string)
+			if !ok {
+				return nil, false
+			}
+			result = append(result, text)
+		}
+		return result, true
+	default:
+		return nil, false
+	}
+}
+
+func legacyXDNSDomainSpec(spec string, serverDefault bool) (string, []any, bool) {
+	name, method, hasMethod := spec, "", false
+	if i := strings.LastIndex(spec, ":"); i >= 0 {
+		name, method, hasMethod = spec[:i], spec[i+1:], true
+	}
+	if name == "" {
+		return "", nil, false
+	}
+	if !hasMethod {
+		if serverDefault {
+			return name, []any{1, 5, 16, 28}, true
+		}
+		return name, []any{16}, true
+	}
+	switch strings.ToLower(method) {
+	case "", "txt":
+		return name, []any{16}, true
+	case "a":
+		return name, []any{1}, true
+	case "aaaa":
+		return name, []any{28}, true
+	}
+	return "", nil, false
+}
+
+func legacyXDNSResolverServer(resolver string) (string, bool) {
+	_, server, ok := strings.Cut(resolver, "+udp://")
+	if !ok || server == "" || strings.Contains(server, "+udp://") {
+		return "", false
+	}
+	return server, true
+}
+
+func legacyXDNSServerDomains(domains []string, namedSchema bool) ([]any, bool) {
+	result := make([]any, 0, len(domains))
+	for _, domain := range domains {
+		name, types, ok := legacyXDNSDomainSpec(domain, true)
+		if !ok {
+			return nil, false
+		}
+		result = append(result, xdnsDomainEntry(name, types, namedSchema))
+	}
+	return result, true
+}
+
+func legacyXDNSClientDomains(resolvers []string, namedSchema bool) ([]any, bool) {
+	result := make([]any, 0, len(resolvers))
+	seen := make(map[string]bool, len(resolvers))
+	for _, resolver := range resolvers {
+		head, _, ok := strings.Cut(resolver, "+udp://")
+		if !ok {
+			return nil, false
+		}
+		name, types, ok := legacyXDNSDomainSpec(head, false)
+		if !ok {
+			return nil, false
+		}
+		key := fmt.Sprint(name, types)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, xdnsDomainEntry(name, types, namedSchema))
+	}
+	return result, true
+}
+
+func legacyXDNSResolvers(resolvers []string, namedSchema bool) ([]any, bool) {
+	result := make([]any, 0, len(resolvers))
+	for _, resolver := range resolvers {
+		server, ok := legacyXDNSResolverServer(resolver)
+		if !ok {
+			return nil, false
+		}
+		if namedSchema {
+			result = append(result, map[string]any{"addrs": []any{"udp://" + server}})
+		} else {
+			result = append(result, map[string]any{"type": "udp", "settings": map[string]any{"addr": server}})
+		}
+	}
+	return result, true
+}
+
+func xdnsDomainEntry(name string, types []any, namedSchema bool) map[string]any {
+	if namedSchema {
+		return map[string]any{"names": []any{name}, "types": types}
+	}
+	return map[string]any{"name": name, "types": types}
 }
 
 func xrayVersionAtLeast(coreVersion string, wantMajor, wantMinor, wantPatch int) (bool, bool) {
@@ -1379,25 +1610,13 @@ func validateExecutableInbound(inbound map[string]any) error {
 	}
 	if protocol == "vless" {
 		settings := mapValue(inbound["settings"])
-		stream := mapValue(inbound["streamSettings"])
 		flow := firstNonEmptyString(settings["flow"])
 
 		if flow != "" {
 			if flow != "xtls-rprx-vision" {
 				return fmt.Errorf("invalid inbound %q: VLESS flow must be xtls-rprx-vision", tag)
 			}
-			network := streamNetwork(stream)
-			security := strings.ToLower(strings.TrimSpace(stringValue(stream["security"])))
-
-			hasEncryption := vlessEncryptionEnabled(settings["decryption"])
-
-			networkSettings := mapValue(stream[networkSettingsKey(network)])
-			headerType := strings.ToLower(stringValue(mapValue(networkSettings["header"])["type"]))
-			isStandardFlowSupported := (security == "tls" || security == "reality") &&
-				(network == "tcp" || network == "raw") &&
-				headerType != "http"
-
-			if !hasEncryption && !isStandardFlowSupported {
+			if !VLESSFlowSupported(inbound) {
 				return fmt.Errorf("invalid inbound %q: VLESS flow requires TCP with TLS/REALITY (without HTTP header) or VLESS Encryption", tag)
 			}
 		}
@@ -1417,6 +1636,9 @@ func validateExecutableInbound(inbound map[string]any) error {
 			key, err := base64.StdEncoding.DecodeString(stringValue(settings["password"]))
 			if err != nil || len(key) != keyLength {
 				return fmt.Errorf("invalid inbound %q: Shadowsocks 2022 server password must be a base64-encoded %d-byte key", tag, keyLength)
+			}
+			if clients, _ := settings["clients"].([]any); len(clients) > 0 && strings.Contains(method, "chacha") {
+				return fmt.Errorf("invalid inbound %q: Shadowsocks 2022 chacha20-poly1305 does not support clients; use blake3-aes-*-gcm for multi-user inbounds", tag)
 			}
 		}
 	}
@@ -1973,8 +2195,10 @@ func (c *Config) resolveInbound(inbound map[string]any) (ResolvedInbound, error)
 		if encryption := firstNonEmptyString(settings["encryption"]); encryption != "" {
 			resolved["encryption"] = encryption
 		}
-		if flow := firstNonEmptyString(settings["flow"]); flow != "" {
-			resolved["flow"] = flow
+		if flow, configured := settings["flow"]; configured {
+			resolved["flow"] = stringValue(flow)
+		} else {
+			delete(resolved, "flow")
 		}
 	}
 	if protocol == "shadowsocks" {

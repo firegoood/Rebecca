@@ -61,6 +61,12 @@ import { PanelSelect as Select } from "components/common/PanelSelect";
 import { SearchInput } from "components/common/SearchInput";
 import { ConfirmDialog } from "components/dialogs/ConfirmDialog";
 import {
+	applyXrayPropagation,
+	type PropagationOp,
+	type PropagationSection,
+	propagationKey,
+} from "service/xrayPropagation";
+import {
 	DataTable,
 	PageLoadingSkeleton,
 	type DataTableBulkAction,
@@ -88,6 +94,7 @@ import { Controller, useForm, useWatch } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { SiNordvpn, SiTorproject } from "react-icons/si";
 import { useMutation, useQuery } from "react-query";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { fetch as apiFetch, getAPIErrorMessage } from "service/http";
 import psiphonIconUrl from "../assets/brands/psiphon.png";
 import windscribeIconUrl from "../assets/brands/windscribe.png";
@@ -723,6 +730,9 @@ const SettingRow: FC<{
 };
 
 export const CoreSettingsPage: FC = () => {
+	const location = useLocation();
+	const [searchParams] = useSearchParams();
+	const requestedTarget = searchParams.get("target") || "master";
 	const { t } = useTranslation();
 	const {
 		fetchCoreSettings,
@@ -739,7 +749,15 @@ export const CoreSettingsPage: FC = () => {
 	const onEditingCore = useDashboard((state) => state.onEditingCore);
 	const canManageXraySettings =
 		getUserIsSuccess && Boolean(userData.permissions?.sections.xray);
-	const [selectedTarget, setSelectedTarget] = useState("master");
+	const [selectedTarget, setSelectedTarget] = useState(requestedTarget);
+	useEffect(() => setSelectedTarget(requestedTarget), [requestedTarget]);
+	const [pendingPropagations, setPendingPropagations] = useState<
+		PropagationOp[]
+	>([]);
+	const [deleteWarning, setDeleteWarning] = useState<{
+		description: string;
+		onConfirm: () => void;
+	} | null>(null);
 	const toast = useToast();
 	const {
 		isOpen: isOutboundOpen,
@@ -954,13 +972,13 @@ export const CoreSettingsPage: FC = () => {
 		[],
 	);
 	const readHashTab = useCallback(
-		() => (window.location.hash || "").replace(/^#/, "").toLowerCase(),
+		(hash = window.location.hash) => (hash || "").replace(/^#/, "").toLowerCase(),
 		[],
 	);
 
 	useEffect(() => {
-		const syncFromHash = () => {
-			const idx = tabKeys.indexOf(readHashTab());
+		const syncFromHash = (hash: string) => {
+			const idx = tabKeys.indexOf(readHashTab(hash));
 			if (idx >= 0) {
 				setActiveTab(idx);
 			} else {
@@ -972,10 +990,11 @@ export const CoreSettingsPage: FC = () => {
 				);
 			}
 		};
-		syncFromHash();
-		window.addEventListener("hashchange", syncFromHash);
-		return () => window.removeEventListener("hashchange", syncFromHash);
-	}, [readHashTab, tabKeys]);
+		syncFromHash(location.hash);
+		const onHashChange = () => syncFromHash(window.location.hash);
+		window.addEventListener("hashchange", onHashChange);
+		return () => window.removeEventListener("hashchange", onHashChange);
+	}, [location.hash, readHashTab, tabKeys]);
 
 	const pageShellBg = useColorModeValue("white", "surface.dark");
 	const pageShellBorder = useColorModeValue("gray.200", "whiteAlpha.300");
@@ -1213,6 +1232,119 @@ export const CoreSettingsPage: FC = () => {
 		},
 	);
 
+	const propagationBaseFor = (section: PropagationSection, current: unknown) => {
+		if (current == null) return null;
+		const pending = pendingPropagations.find(
+			(op) =>
+				op.source === selectedTarget &&
+				op.section === section &&
+				propagationKey(op.after) === propagationKey(current),
+		);
+		return pending ? pending.before : current;
+	};
+
+	const queuePropagation = (
+		section: PropagationSection,
+		current: unknown,
+		after: unknown,
+		targets: string[],
+	) => {
+		setPendingPropagations((previous) => {
+			const next = [...previous];
+			const index =
+				current == null
+					? -1
+					: next.findIndex(
+							(op) =>
+								op.source === selectedTarget &&
+								op.section === section &&
+								propagationKey(op.after) === propagationKey(current),
+						);
+			if (index >= 0) {
+				if (targets.length) {
+					next[index] = { ...next[index], after, targets };
+				} else {
+					next.splice(index, 1);
+				}
+			} else if (targets.length) {
+				next.push({
+					source: selectedTarget,
+					section,
+					before: current ?? null,
+					after,
+					targets,
+				});
+			}
+			return next;
+		});
+	};
+
+	const applyPendingPropagations = async () => {
+		const operations = pendingPropagations.filter(
+			(op) => op.source === selectedTarget,
+		);
+		setPendingPropagations([]);
+		const summary = { applied: 0, skipped: 0, failed: 0 };
+		for (const operation of operations) {
+			try {
+				const results = await applyXrayPropagation(operation);
+				for (const result of results) {
+					if (result.applied) summary.applied += 1;
+					else if (result.error) summary.failed += 1;
+					else summary.skipped += 1;
+				}
+			} catch {
+				summary.failed += operation.targets.length;
+			}
+		}
+		return summary;
+	};
+
+	const countOutboundReferences = (tags: string[]) => {
+		const names = tags.filter(Boolean);
+		if (!names.length) return 0;
+		return (
+			getRoutingRules().filter((rule) =>
+				names.includes(String(rule.outboundTag ?? "")),
+			).length +
+			getBalancers().filter((balancer) =>
+				balancer.selector.some((tag) => names.includes(tag)),
+			).length
+		);
+	};
+
+	const confirmOutboundRemoval = (tags: unknown[], remove: () => void) => {
+		const references = countOutboundReferences(
+			tags.map((tag) => String(tag ?? "")),
+		);
+		if (!references) {
+			remove();
+			return;
+		}
+		setDeleteWarning({
+			description: t("pages.xray.propagate.deleteOutboundReferenced", {
+				count: references,
+			}),
+			onConfirm: remove,
+		});
+	};
+
+	const renameOutboundReferences = (oldTag: string, newTag: string) => {
+		commitRoutingRules(
+			getRoutingRules().map((rule) =>
+				rule.outboundTag === oldTag ? { ...rule, outboundTag: newTag } : rule,
+			),
+		);
+		commitBalancers(
+			getBalancers().map((balancer) => ({
+				...balancer,
+				selector: balancer.selector.map((tag) =>
+					tag === oldTag ? newTag : tag,
+				),
+			})),
+		);
+	};
+
 	const handleOnSave = form.handleSubmit(({ config: submittedConfig }: any) => {
 		const nextConfig = JSON.parse(JSON.stringify(submittedConfig || {}));
 		if (!dnsEnabledState) {
@@ -1222,7 +1354,7 @@ export const CoreSettingsPage: FC = () => {
 			nextConfig.dns = createDefaultDnsConfig();
 		}
 		updateConfig(nextConfig, selectedTarget)
-			.then(() => {
+			.then(async () => {
 				form.reset({ config: nextConfig });
 				initialConfigStringRef.current = serializeConfig(nextConfig);
 				setDnsEnabledState(Boolean(nextConfig.dns));
@@ -1233,6 +1365,16 @@ export const CoreSettingsPage: FC = () => {
 					position: "top",
 					duration: 3000,
 				});
+				const summary = await applyPendingPropagations();
+				if (summary.applied + summary.skipped + summary.failed > 0) {
+					toast({
+						title: t("pages.xray.propagate.summary", summary),
+						status: summary.failed ? "warning" : "success",
+						isClosable: true,
+						position: "top",
+						duration: 5000,
+					});
+				}
 			})
 			.catch((e) => {
 				let message = t("core.generalErrorMessage");
@@ -1764,11 +1906,14 @@ export const CoreSettingsPage: FC = () => {
 	const deleteOutbound = (index: number) => {
 		const outbounds = getOutbounds();
 		if (index < 0 || index >= outbounds.length) return;
-		outbounds.splice(index, 1);
-		commitOutbounds(outbounds);
-		setSelectedOutboundIds((current) =>
-			current.filter((id) => Number(id) !== index),
-		);
+		confirmOutboundRemoval([outbounds[index]?.tag], () => {
+			const current = getOutbounds();
+			current.splice(index, 1);
+			commitOutbounds(current);
+			setSelectedOutboundIds((selected) =>
+				selected.filter((id) => Number(id) !== index),
+			);
+		});
 	};
 
 	const deleteSelectedOutbounds = (ids: string[]) => {
@@ -1778,13 +1923,19 @@ export const CoreSettingsPage: FC = () => {
 			.sort((a, b) => b - a);
 		if (!indexes.length) return;
 		const outbounds = getOutbounds();
-		for (const index of indexes) {
-			if (index >= 0 && index < outbounds.length) {
-				outbounds.splice(index, 1);
-			}
-		}
-		commitOutbounds(outbounds);
-		setSelectedOutboundIds([]);
+		confirmOutboundRemoval(
+			indexes.map((index) => outbounds[index]?.tag),
+			() => {
+				const current = getOutbounds();
+				for (const index of indexes) {
+					if (index >= 0 && index < current.length) {
+						current.splice(index, 1);
+					}
+				}
+				commitOutbounds(current);
+				setSelectedOutboundIds([]);
+			},
+		);
 	};
 
 	const moveOutbound = (fromIndex: number, toIndex: number) => {
@@ -1926,8 +2077,14 @@ export const CoreSettingsPage: FC = () => {
 		commitRoutingRules(currentRules);
 	};
 
-	const handleRuleModalSubmit = (rule: RoutingRule) => {
+	const handleRuleModalSubmit = (rule: RoutingRule, targetIds: string[]) => {
 		const currentRules = getRoutingRules();
+		queuePropagation(
+			"routing.rules",
+			editingRuleIndex !== null ? (canonicalRoutingRules[editingRuleIndex] ?? null) : null,
+			rule,
+			targetIds,
+		);
 		if (
 			editingRuleIndex !== null &&
 			editingRuleIndex >= 0 &&
@@ -2079,10 +2236,20 @@ export const CoreSettingsPage: FC = () => {
 		[],
 	);
 
-	const handleBalancerSubmit = (values: BalancerFormValues) => {
+	const handleBalancerSubmit = (
+		values: BalancerFormValues,
+		targetIds: string[],
+	) => {
 		const balancers = getBalancers();
 		const nextBalancer = toBalancerConfig(values);
 		let oldTag: string | undefined;
+		const previous =
+			editingBalancerIndex !== null &&
+			editingBalancerIndex >= 0 &&
+			editingBalancerIndex < balancers.length
+				? balancers[editingBalancerIndex]
+				: undefined;
+		queuePropagation("balancers", previous ?? null, nextBalancer, targetIds);
 		if (
 			editingBalancerIndex !== null &&
 			editingBalancerIndex >= 0 &&
@@ -2116,8 +2283,25 @@ export const CoreSettingsPage: FC = () => {
 	const deleteBalancer = (index: number) => {
 		const balancers = getBalancers();
 		if (index < 0 || index >= balancers.length) return;
-		balancers.splice(index, 1);
-		commitBalancers(balancers);
+		const tag = balancers[index].tag;
+		const removeBalancer = () => {
+			const current = getBalancers();
+			current.splice(index, 1);
+			commitBalancers(current);
+		};
+		const references = tag
+			? getRoutingRules().filter((rule) => rule.balancerTag === tag).length
+			: 0;
+		if (!references) {
+			removeBalancer();
+			return;
+		}
+		setDeleteWarning({
+			description: t("pages.xray.propagate.deleteBalancerReferenced", {
+				count: references,
+			}),
+			onConfirm: removeBalancer,
+		});
 	};
 
 	const addReverse = () => {
@@ -3191,7 +3375,7 @@ export const CoreSettingsPage: FC = () => {
 		}
 	};
 
-	const handleOutboundSave = (outboundJson: unknown) => {
+	const handleOutboundSave = (outboundJson: unknown, targetIds: string[]) => {
 		const outbound = outboundJson as OutboundJson;
 		const outbounds = getOutbounds();
 		const tag = String(outbound.tag ?? "");
@@ -3201,6 +3385,16 @@ export const CoreSettingsPage: FC = () => {
 		if (duplicateIndex >= 0) {
 			throw new Error(t("pages.xray.outbound.tagExistsNamed", { tag }));
 		}
+		const previous =
+			editingOutboundIndex !== null &&
+			editingOutboundIndex >= 0 &&
+			editingOutboundIndex < outbounds.length
+				? outbounds[editingOutboundIndex]
+				: undefined;
+		if (previous?.tag && previous.tag !== tag) {
+			renameOutboundReferences(String(previous.tag), tag);
+		}
+		queuePropagation("outbounds", previous ?? null, outbound, targetIds);
 		if (
 			editingOutboundIndex !== null &&
 			editingOutboundIndex >= 0 &&
@@ -5672,6 +5866,15 @@ export const CoreSettingsPage: FC = () => {
 								: null
 						}
 						existingTags={availableOutboundTags}
+						sourceTarget={selectedTarget}
+						propagationBase={
+							propagationBaseFor(
+								"outbounds",
+								editingOutboundIndex !== null
+									? (canonicalOutbounds[editingOutboundIndex] ?? null)
+									: null,
+							) as Record<string, unknown> | null
+						}
 						onSubmitOutbound={handleOutboundSave}
 					/>
 				)}
@@ -5689,6 +5892,15 @@ export const CoreSettingsPage: FC = () => {
 						availableBalancerTags={availableBalancerTags}
 						onTestOutbound={testOutboundByTag}
 						outboundTestingByTag={outboundTestingByTag}
+						sourceTarget={selectedTarget}
+						propagationBase={
+							propagationBaseFor(
+								"routing.rules",
+								editingRuleIndex !== null
+									? (canonicalRoutingRules[editingRuleIndex] ?? null)
+									: null,
+							) as RoutingRule | null
+						}
 						onSubmit={handleRuleModalSubmit}
 						onClose={handleRuleModalClose}
 					/>
@@ -5817,6 +6029,15 @@ export const CoreSettingsPage: FC = () => {
 											? balancersData[editingBalancerIndex]?.tag
 											: ""),
 							)}
+						sourceTarget={selectedTarget}
+						propagationBase={
+							propagationBaseFor(
+								"balancers",
+								editingBalancerIndex !== null
+									? (getBalancers()[editingBalancerIndex] ?? null)
+									: null,
+							) as Record<string, unknown> | null
+						}
 						onSubmit={handleBalancerSubmit}
 					/>
 				)}
@@ -5852,6 +6073,17 @@ export const CoreSettingsPage: FC = () => {
 					/>
 				)}
 			</Suspense>
+			<ConfirmDialog
+				isOpen={Boolean(deleteWarning)}
+				onClose={() => setDeleteWarning(null)}
+				onConfirm={() => {
+					deleteWarning?.onConfirm();
+					setDeleteWarning(null);
+				}}
+				title={t("pages.xray.propagate.deleteTitle")}
+				description={deleteWarning?.description ?? ""}
+				colorScheme="red"
+			/>
 			<ConfirmDialog
 				isOpen={Boolean(outboundReset)}
 				onClose={() => setOutboundReset(null)}

@@ -27,7 +27,6 @@ type serviceHostAssignment struct {
 type serviceWritePayload struct {
 	Name        string                  `json:"name"`
 	Description *string                 `json:"description"`
-	Flow        *string                 `json:"flow"`
 	Hosts       []serviceHostAssignment `json:"hosts"`
 	AdminIDs    []int64                 `json:"admin_ids"`
 }
@@ -52,7 +51,6 @@ type serviceBaseResponse struct {
 	ID                  int64   `json:"id"`
 	Name                string  `json:"name"`
 	Description         *string `json:"description"`
-	Flow                *string `json:"flow"`
 	UsedTraffic         int64   `json:"used_traffic"`
 	LifetimeUsedTraffic int64   `json:"lifetime_used_traffic"`
 	HostCount           int64   `json:"host_count"`
@@ -271,11 +269,6 @@ func (s *Server) handleServiceCreate(w http.ResponseWriter, r *http.Request) {
 		if err := syncServiceAdminsTx(r.Context(), tx, serviceID, payload.AdminIDs); err != nil {
 			return err
 		}
-		if payload.Flow != nil {
-			if _, err := tx.ExecContext(r.Context(), `UPDATE services SET flow = ? WHERE id = ?`, *payload.Flow, serviceID); err != nil && !serviceFlowColumnMissing(err) {
-				return serviceWriteSQLError(err)
-			}
-		}
 		return nil
 	})
 	if err != nil {
@@ -318,7 +311,6 @@ func (s *Server) handleServiceUpdate(w http.ResponseWriter, r *http.Request, ser
 		}
 		assignments := []string{}
 		args := []any{}
-		flowChanged := false
 		if _, ok := fields["name"]; ok {
 			name := strings.TrimSpace(payload.Name)
 			if name == "" {
@@ -330,21 +322,6 @@ func (s *Server) handleServiceUpdate(w http.ResponseWriter, r *http.Request, ser
 		if _, ok := fields["description"]; ok {
 			assignments = append(assignments, "description = ?")
 			args = append(args, nullableTrimmedString(payload.Description))
-		}
-		if _, ok := fields["flow"]; ok {
-			oldFlow, supported, err := serviceFlowTx(r.Context(), tx, serviceID)
-			if err != nil {
-				return err
-			}
-			newFlow := ""
-			if payload.Flow != nil {
-				newFlow = *payload.Flow
-			}
-			if supported {
-				flowChanged = oldFlow != newFlow
-				assignments = append(assignments, "flow = ?")
-				args = append(args, nullableTrimmedString(payload.Flow))
-			}
 		}
 		if len(assignments) > 0 {
 			assignments = append(assignments, "updated_at = ?")
@@ -377,11 +354,6 @@ func (s *Server) handleServiceUpdate(w http.ResponseWriter, r *http.Request, ser
 				return err
 			}
 		}
-		if flowChanged {
-			if err := enqueueAffectedServicesUsersTx(r.Context(), tx, map[int64]bool{serviceID: true}); err != nil {
-				return err
-			}
-		}
 		return nil
 	})
 	if err != nil {
@@ -411,7 +383,7 @@ func (s *Server) handleServiceDelete(w http.ResponseWriter, r *http.Request, ser
 			return err
 		}
 		var adminLinks int64
-		if err := tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM admins_services WHERE service_id = ?`, serviceID).Scan(&adminLinks); err != nil {
+		if err := tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM service_admins WHERE service_id = ?`, serviceID).Scan(&adminLinks); err != nil {
 			return err
 		}
 		if adminLinks > 0 && !payload.UnlinkAdmins {
@@ -454,7 +426,7 @@ func (s *Server) handleServiceDelete(w http.ResponseWriter, r *http.Request, ser
 		default:
 			return statusError{status: http.StatusBadRequest, detail: "Invalid delete mode"}
 		}
-		if _, err := tx.ExecContext(r.Context(), `DELETE FROM admins_services WHERE service_id = ?`, serviceID); err != nil {
+		if _, err := tx.ExecContext(r.Context(), `DELETE FROM service_admins WHERE service_id = ?`, serviceID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(r.Context(), `DELETE FROM service_hosts WHERE service_id = ?`, serviceID); err != nil {
@@ -491,10 +463,10 @@ func (s *Server) handleServiceResetUsage(w http.ResponseWriter, r *http.Request,
 		if _, err := tx.ExecContext(r.Context(), `UPDATE services SET used_traffic = 0, users_usage = 0, updated_at = ? WHERE id = ?`, now, serviceID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(r.Context(), `UPDATE admins_services SET used_traffic = 0, updated_at = ? WHERE service_id = ?`, now, serviceID); err != nil {
+		if _, err := tx.ExecContext(r.Context(), `UPDATE service_admins SET used_traffic = 0, updated_at = ? WHERE service_id = ?`, now, serviceID); err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(r.Context(), `SELECT admin_id FROM admins_services WHERE service_id = ?`, serviceID)
+		rows, err := tx.QueryContext(r.Context(), `SELECT admin_id FROM service_admins WHERE service_id = ?`, serviceID)
 		if err != nil {
 			return err
 		}
@@ -611,7 +583,7 @@ func (s *Server) handleServiceAdminLimitUpdate(w http.ResponseWriter, r *http.Re
 		assignments = append(assignments, "updated_at = ?")
 		args = append(args, dbTimestamp(time.Now().UTC()))
 		args = append(args, adminID, serviceID)
-		if _, err := tx.ExecContext(r.Context(), `UPDATE admins_services SET `+strings.Join(assignments, ", ")+` WHERE admin_id = ? AND service_id = ?`, args...); err != nil {
+		if _, err := tx.ExecContext(r.Context(), `UPDATE service_admins SET `+strings.Join(assignments, ", ")+` WHERE admin_id = ? AND service_id = ?`, args...); err != nil {
 			return err
 		}
 		return reconcileAdminTrafficLimitByIDTx(r.Context(), tx, adminID, time.Now().UTC())
@@ -825,16 +797,8 @@ func decodeServiceWritePayload(w http.ResponseWriter, r *http.Request, create bo
 			return serviceWritePayload{}, nil, statusError{status: http.StatusBadRequest, detail: "invalid request body"}
 		}
 	}
-	if payload.Flow != nil {
-		normalized, ok := userapp.NormalizeFlow(*payload.Flow)
-		if !ok {
-			return serviceWritePayload{}, nil, statusError{status: http.StatusBadRequest, detail: "Unsupported flow value"}
-		}
-		if normalized == "" {
-			payload.Flow = nil
-		} else {
-			payload.Flow = &normalized
-		}
+	if _, present := fields["flow"]; present {
+		return serviceWritePayload{}, nil, statusError{status: http.StatusBadRequest, detail: "Flow is configured on VLESS inbounds, not services"}
 	}
 	if create {
 		fields["name"] = nil
@@ -952,7 +916,7 @@ func (s *Server) servicesList(r *http.Request, dbadmin adminapp.Admin, name stri
 		args = append(args, "%"+name+"%")
 	}
 	if !dbadmin.Role.IsGlobal() {
-		join = " JOIN admins_services vis ON vis.service_id = s.id"
+		join = " JOIN service_admins vis ON vis.service_id = s.id"
 		where = append(where, "vis.admin_id = ?")
 		args = append(args, dbadmin.ID)
 	}
@@ -998,10 +962,6 @@ ORDER BY s.created_at DESC, s.id DESC`
 	services := []serviceBaseResponse{}
 	for rows.Next() {
 		item, err := scanServiceBase(rows)
-		if err != nil {
-			return nil, 0, err
-		}
-		item.Flow, err = s.serviceFlow(r.Context(), item.ID)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -1053,7 +1013,6 @@ GROUP BY s.id, s.name, s.description, s.used_traffic, s.lifetime_used_traffic`, 
 	if err != nil {
 		return serviceBaseResponse{}, err
 	}
-	item.Flow, err = s.serviceFlow(ctx, serviceID)
 	return item, err
 }
 
@@ -1101,7 +1060,7 @@ func (s *Server) serviceAdmins(ctx context.Context, serviceID int64) ([]serviceA
 	COALESCE(l.delete_user_usage_limit_enabled, 0),
 	l.delete_user_usage_limit,
 	COALESCE(l.deleted_users_usage, 0)
-FROM admins_services l
+FROM service_admins l
 JOIN admins a ON a.id = l.admin_id
 WHERE l.service_id = ? AND COALESCE(a.status, '') != 'deleted'
 ORDER BY a.username`, serviceID)
@@ -1136,7 +1095,7 @@ func (s *Server) serviceAdmin(ctx context.Context, serviceID int64, adminID int6
 	COALESCE(l.delete_user_usage_limit_enabled, 0),
 	l.delete_user_usage_limit,
 	COALESCE(l.deleted_users_usage, 0)
-FROM admins_services l
+FROM service_admins l
 JOIN admins a ON a.id = l.admin_id
 WHERE l.service_id = ? AND l.admin_id = ? AND COALESCE(a.status, '') != 'deleted'`, serviceID, adminID)
 	item, err := scanServiceAdmin(row)
@@ -1160,42 +1119,6 @@ func scanServiceBase(scanner serviceBaseScanner) (serviceBaseResponse, error) {
 	item.HasHosts = item.HostCount > 0
 	item.Broken = item.HostCount == 0
 	return item, nil
-}
-
-func serviceFlowColumnMissing(err error) bool {
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "no such column") ||
-		strings.Contains(message, "unknown column") ||
-		strings.Contains(message, "no such table") ||
-		strings.Contains(message, "doesn't exist")
-}
-
-func (s *Server) serviceFlow(ctx context.Context, serviceID int64) (*string, error) {
-	var flow sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT flow FROM services WHERE id = ? LIMIT 1`, serviceID).Scan(&flow)
-	if err != nil {
-		if serviceFlowColumnMissing(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	if !flow.Valid || strings.TrimSpace(flow.String) == "" {
-		return nil, nil
-	}
-	value := strings.TrimSpace(flow.String)
-	return &value, nil
-}
-
-func serviceFlowTx(ctx context.Context, tx *sql.Tx, serviceID int64) (string, bool, error) {
-	var flow sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT flow FROM services WHERE id = ? LIMIT 1`, serviceID).Scan(&flow)
-	if err != nil {
-		if serviceFlowColumnMissing(err) {
-			return "", false, nil
-		}
-		return "", false, err
-	}
-	return strings.TrimSpace(flow.String), true, nil
 }
 
 func scanServiceAdmin(scanner serviceBaseScanner) (serviceAdminResponse, error) {
@@ -1245,7 +1168,7 @@ func (s *Server) ensureServiceVisible(ctx context.Context, serviceID int64, dbad
 		return ensureServiceExistsDB(ctx, s.db, serviceID)
 	}
 	var exists int64
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM admins_services WHERE admin_id = ? AND service_id = ?`, dbadmin.ID, serviceID).Scan(&exists)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM service_admins WHERE admin_id = ? AND service_id = ?`, dbadmin.ID, serviceID).Scan(&exists)
 	if err != nil {
 		return err
 	}
@@ -1275,7 +1198,7 @@ func ensureServiceExistsTx(ctx context.Context, tx *sql.Tx, serviceID int64) err
 
 func ensureAdminServiceLinkExistsTx(ctx context.Context, tx *sql.Tx, adminID int64, serviceID int64) error {
 	var id int64
-	err := tx.QueryRowContext(ctx, `SELECT admin_id FROM admins_services WHERE admin_id = ? AND service_id = ? LIMIT 1`, adminID, serviceID).Scan(&id)
+	err := tx.QueryRowContext(ctx, `SELECT admin_id FROM service_admins WHERE admin_id = ? AND service_id = ? LIMIT 1`, adminID, serviceID).Scan(&id)
 	if err == sql.ErrNoRows {
 		return statusError{status: http.StatusNotFound, detail: "Admin service link not found"}
 	}
@@ -1312,7 +1235,7 @@ func syncServiceAdminsTx(ctx context.Context, tx *sql.Tx, serviceID int64, admin
 			return err
 		}
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT admin_id FROM admins_services WHERE service_id = ?`, serviceID)
+	rows, err := tx.QueryContext(ctx, `SELECT admin_id FROM service_admins WHERE service_id = ?`, serviceID)
 	if err != nil {
 		return err
 	}
@@ -1328,7 +1251,7 @@ func syncServiceAdminsTx(ctx context.Context, tx *sql.Tx, serviceID int64, admin
 	for _, id := range existingIDs {
 		existing[id] = struct{}{}
 		if _, ok := desired[id]; !ok {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM admins_services WHERE admin_id = ? AND service_id = ?`, id, serviceID); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM service_admins WHERE admin_id = ? AND service_id = ?`, id, serviceID); err != nil {
 				return err
 			}
 		}
@@ -1339,7 +1262,7 @@ func syncServiceAdminsTx(ctx context.Context, tx *sql.Tx, serviceID int64, admin
 		}
 		now := dbTimestamp(time.Now().UTC())
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO admins_services (
+INSERT INTO service_admins (
 	admin_id,
 	service_id,
 	used_traffic,

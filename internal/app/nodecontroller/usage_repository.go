@@ -197,6 +197,23 @@ func (r Repository) InboundUsageCoefficients(ctx context.Context) (map[string]fl
 	return result, rows.Err()
 }
 
+func (r Repository) IPLimitedUserIDs(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id FROM users WHERE COALESCE(ip_limit, 0) > 0`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []string
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		result = append(result, strconv.FormatInt(id, 10))
+	}
+	return result, rows.Err()
+}
+
 func (r Repository) UserSpeedIdentities(ctx context.Context, userIDs []int64) (map[int64]userSpeedIdentity, error) {
 	result := make(map[int64]userSpeedIdentity, len(userIDs))
 	err := forEachInt64Chunk(userIDs, usagePersistBatchSize, func(chunk []int64) error {
@@ -827,7 +844,7 @@ WHERE id = ?`,
 		value := adminServiceUsage[key]
 		if _, err := tx.ExecContext(
 			ctx,
-			`UPDATE admins_services
+			`UPDATE service_admins
 SET used_traffic = COALESCE(used_traffic, 0) + ?,
     lifetime_used_traffic = COALESCE(lifetime_used_traffic, 0) + ?,
     updated_at = ?
@@ -1068,7 +1085,7 @@ func (r Repository) enforceUsageLifecycle(ctx context.Context, tx *sql.Tx, userI
        COALESCE(used_traffic, 0),
        data_limit,
        expire,
-	       COALESCE((SELECT up.online_at FROM user_presence up WHERE up.user_id = users.id), online_at),
+	       (SELECT up.online_at FROM user_presence up WHERE up.user_id = users.id),
        on_hold_expire_duration,
        on_hold_timeout,
        edit_at,
@@ -1360,11 +1377,11 @@ func (r Repository) incrementSystemUsage(ctx context.Context, tx *sql.Tx, up int
 	if r.dialect == "sqlite" {
 		_, err := tx.ExecContext(
 			ctx,
-			`INSERT INTO system (id, uplink, downlink)
+			`INSERT INTO master_usage (id, uplink, downlink)
 VALUES (1, ?, ?)
 ON CONFLICT(id) DO UPDATE
-SET uplink = COALESCE(system.uplink, 0) + excluded.uplink,
-    downlink = COALESCE(system.downlink, 0) + excluded.downlink`,
+SET uplink = COALESCE(master_usage.uplink, 0) + excluded.uplink,
+    downlink = COALESCE(master_usage.downlink, 0) + excluded.downlink`,
 			up,
 			down,
 		)
@@ -1372,7 +1389,7 @@ SET uplink = COALESCE(system.uplink, 0) + excluded.uplink,
 	}
 	_, err := tx.ExecContext(
 		ctx,
-		"INSERT INTO `system` (id, uplink, downlink)\n"+
+		"INSERT INTO `master_usage` (id, uplink, downlink)\n"+
 			`VALUES (1, ?, ?)
 ON DUPLICATE KEY UPDATE
     uplink = COALESCE(uplink, 0) + VALUES(uplink),

@@ -64,7 +64,11 @@ import {
 	useDashboard,
 } from "contexts/DashboardContext";
 import { useHosts } from "contexts/HostsContext";
-import { useServicesStore } from "contexts/ServicesContext";
+import {
+	type ServiceListParams,
+	useServicesStore,
+} from "contexts/ServicesContext";
+import { Pagination } from "components/Pagination";
 import { motion } from "framer-motion";
 import useGetUser from "hooks/useGetUser";
 import { type FC, useCallback, useEffect, useMemo, useState } from "react";
@@ -189,7 +193,6 @@ const ServiceDialog: FC<ServiceDialogProps> = ({
 	const [description, setDescription] = useState(
 		initialService?.description ?? "",
 	);
-	const [flow, setFlow] = useState(initialService?.flow ?? "");
 	const [selectedAdmins, setSelectedAdmins] = useState<number[]>(
 		initialService?.admin_ids ?? [],
 	);
@@ -228,7 +231,6 @@ const ServiceDialog: FC<ServiceDialogProps> = ({
 		if (isOpen) {
 			setName(initialService?.name ?? "");
 			setDescription(initialService?.description ?? "");
-			setFlow(initialService?.flow ?? "");
 			setSelectedAdmins(initialService?.admin_ids ?? []);
 			setSelectedHosts(initialService?.hosts.map((host) => host.id) ?? []);
 			setAdminSearch("");
@@ -337,7 +339,6 @@ const ServiceDialog: FC<ServiceDialogProps> = ({
 			{
 				name: name.trim(),
 				description: description?.trim() || null,
-				flow: flow || null,
 				admin_ids: selectedAdmins,
 				hosts: assignments,
 			},
@@ -436,23 +437,6 @@ const ServiceDialog: FC<ServiceDialogProps> = ({
 									maxLength={256}
 								/>
 							</SimpleGrid>
-							<FormControl mt={3}>
-								<FormLabel>{t("services.fields.flow")}</FormLabel>
-								<Select
-									size="sm"
-									value={flow}
-									onChange={(event) => setFlow(event.target.value)}
-								>
-									<option value="">{t("userDialog.flow.none")}</option>
-									<option value="xtls-rprx-vision">
-										{t("userDialog.flow.xtls_rprx_vision")}
-									</option>
-									<option value="xtls-rprx-vision-udp443">
-										{t("userDialog.flow.xtls_rprx_vision_udp443")}
-									</option>
-								</Select>
-								<FormHelperText>{t("services.flowHint")}</FormHelperText>
-							</FormControl>
 						</Box>
 
 						<Box className="xray-dialog-section service-dialog-section">
@@ -789,6 +773,15 @@ const ServicesPage: FC = () => {
 	const canManageServices =
 		getUserIsSuccess && Boolean(userData.permissions?.sections.services);
 	const services = useServicesStore((state) => state.services);
+	const summaryServices = useServicesStore((state) => state.summaryServices);
+	const servicesTotal = useServicesStore((state) => state.total);
+	const fetchServiceSummary = useServicesStore(
+		(state) => state.fetchServiceSummary,
+	);
+	const [listFilters, setListFilters] = useState<
+		ServiceListParams & { limit: number; offset: number; name: string }
+	>({ limit: 20, offset: 0, name: "" });
+	const [serviceSearch, setServiceSearch] = useState("");
 	const serviceDetail = useServicesStore((state) => state.serviceDetail);
 	const isServicesLoading = useServicesStore((state) => state.isLoading);
 	const isServiceSaving = useServicesStore((state) => state.isSaving);
@@ -841,13 +834,31 @@ const ServicesPage: FC = () => {
 		if (!getUserIsSuccess || !canManageServices) {
 			return;
 		}
-		fetchServices();
+		void fetchServices(listFilters);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [
 		getUserIsSuccess,
 		canManageServices,
 		fetchServices,
+		listFilters,
 	]);
+
+	useEffect(() => {
+		if (!getUserIsSuccess || !canManageServices) {
+			return;
+		}
+		void fetchServiceSummary();
+	}, [getUserIsSuccess, canManageServices, fetchServiceSummary]);
+
+	useEffect(() => {
+		const timer = window.setTimeout(() => {
+			const name = serviceSearch.trim();
+			setListFilters((current) =>
+				current.name === name ? current : { ...current, name, offset: 0 },
+			);
+		}, 300);
+		return () => window.clearTimeout(timer);
+	}, [serviceSearch]);
 
 	const ensureServiceDialogResources = useCallback(() => {
 		if (useAdminsStore.getState().adminOptions.length === 0) {
@@ -1015,7 +1026,7 @@ const ServicesPage: FC = () => {
 
 	const resetTargetName =
 		resetServiceId != null
-			? services.find((service) => service.id === resetServiceId)
+			? summaryServices.find((service) => service.id === resetServiceId)
 					?.name
 			: undefined;
 
@@ -1078,15 +1089,15 @@ const ServicesPage: FC = () => {
 
 	const otherServices = useMemo(() => {
 		if (!servicePendingDelete) {
-				return services;
+				return summaryServices;
 		}
-		return services.filter(
+		return summaryServices.filter(
 			(service) => service.id !== servicePendingDelete.id,
 		);
-	}, [servicePendingDelete, services]);
+	}, [servicePendingDelete, summaryServices]);
 	const servicesSummary = useMemo(
 		() =>
-			services.reduce(
+			summaryServices.reduce(
 				(summary, service) => ({
 					totalHosts: summary.totalHosts + Number(service.host_count || 0),
 					totalUsers: summary.totalUsers + Number(service.user_count || 0),
@@ -1103,14 +1114,14 @@ const ServicesPage: FC = () => {
 					brokenServices: 0,
 				},
 			),
-			[services],
+			[summaryServices],
 	);
 
 	const serviceSummaryItems = useMemo<ResourceSummaryItem[]>(
 		() => [
 			{
 				label: t("services.title"),
-					value: services.length,
+					value: summaryServices.length,
 				colorScheme: "gray",
 			},
 			{
@@ -1140,7 +1151,7 @@ const ServicesPage: FC = () => {
 						: undefined,
 			},
 		],
-			[services.length, servicesSummary, t],
+			[summaryServices.length, servicesSummary, t],
 	);
 
 	useEffect(() => {
@@ -1807,6 +1818,13 @@ const ServicesPage: FC = () => {
 				}
 			/>
 
+			<Input
+				value={serviceSearch}
+				onChange={(event) => setServiceSearch(event.target.value)}
+				placeholder={t("services.searchServices")}
+				maxW="320px"
+			/>
+
 			<DataTable
 				ariaLabel={t("services.title")}
 					data={services}
@@ -1844,6 +1862,25 @@ const ServicesPage: FC = () => {
 						},
 					},
 				}}
+			/>
+			<Pagination
+				for="services"
+				total={servicesTotal}
+				limit={listFilters.limit}
+				offset={listFilters.offset}
+				onPageChange={(page) =>
+					setListFilters((current) => ({
+						...current,
+						offset: page * current.limit,
+					}))
+				}
+				onPageSizeChange={(size) =>
+					setListFilters((current) => ({
+						...current,
+						limit: size,
+						offset: 0,
+					}))
+				}
 			/>
 
 			{selectedService && (
