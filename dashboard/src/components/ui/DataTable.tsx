@@ -28,6 +28,7 @@ import {
 	DocumentDuplicateIcon,
 } from "@heroicons/react/24/outline";
 import {
+	type CellContext,
 	type ColumnDef,
 	flexRender,
 	functionalUpdate,
@@ -52,7 +53,9 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { copyTextToClipboard } from "utils/clipboard";
+import { createStableCellRegistry } from "utils/stableCell";
 import { BulkActionBar } from "./BulkActionBar";
+import { buildSortOptions, DataTableSortMenu } from "./DataTableSortMenu";
 import {
 	orderRowActions,
 	RowActionsMenu,
@@ -499,6 +502,7 @@ export function DataTable<TData>({
 	sorting,
 	onSortingChange,
 	manualSorting = false,
+	showSortMenu = true,
 	pagination,
 	dir,
 	tableProps,
@@ -515,6 +519,9 @@ export function DataTable<TData>({
 	rowActionsRef.current = rowActions;
 	const renderRowActionsRef = useRef(renderRowActions);
 	renderRowActionsRef.current = renderRowActions;
+	const [stableCell] = useState(() =>
+		createStableCellRegistry<CellContext<TData, unknown>>(),
+	);
 	const [contextMenu, setContextMenu] = useState<{
 		row: TData | null;
 		x: number;
@@ -648,17 +655,19 @@ export function DataTable<TData>({
 	);
 	const rowSelection = controlledSelection ?? internalSelection;
 	const sortingState = sorting ?? internalSorting;
+	const sortOptions = useMemo(() => buildSortOptions(columns, data), [columns, data]);
 
 	const tableColumns = useMemo<ColumnDef<TData, unknown>[]>(() => {
 		const dataColumns = visibleDesktopColumns.map<ColumnDef<TData, unknown>>((column) => ({
 			id: column.id,
 			header: () => column.header,
 			accessorFn: (row) => getColumnValue(row, column),
-			cell: ({ row, getValue }) =>
+			cell: stableCell(`column:${column.id}`, ({ row, getValue }) =>
 				column.cell
 					? column.cell(row.original)
 					: renderFallbackValue(getValue()),
-			enableSorting: Boolean(column.sortable),
+			),
+			enableSorting: column.sortable ?? Boolean(column.accessor || column.sortValue),
 			meta: column,
 		}));
 
@@ -666,7 +675,7 @@ export function DataTable<TData>({
 			dataColumns.push({
 				id: "__actions",
 				header: () => <ActionsHeaderIcon />,
-				cell: ({ row }) => renderConfiguredActions(row.original),
+				cell: stableCell("__actions", ({ row }) => renderConfiguredActions(row.original)),
 				enableSorting: false,
 			});
 		}
@@ -705,6 +714,7 @@ export function DataTable<TData>({
 		selectAllLabel,
 		selectRowLabel,
 		visibleDesktopColumns,
+		stableCell,
 	]);
 
 	const table = useReactTable({
@@ -939,6 +949,15 @@ export function DataTable<TData>({
 			pb={bulkChildren && selectedCount > 0 ? { base: 32, md: 24 } : undefined}
 			{...rootContainerProps}
 		>
+			{showSortMenu && sortOptions.length > 0 && (
+				<HStack justify="flex-end" className="rb-data-table-sort" mb={2}>
+					<DataTableSortMenu
+						options={sortOptions}
+						sorting={sortingState}
+						onSortingChange={(next) => table.setSorting(next)}
+					/>
+				</HStack>
+			)}
 			{isMobile ? (
 				<VStack className="rb-resource-list" spacing={2.5} align="stretch">
 					{!showLoadingState && (rows.length > 0 || state) && (
@@ -1153,7 +1172,6 @@ export function DataTable<TData>({
 											| undefined;
 										const isSelectColumn = header.column.id === "__select";
 										const isActionsColumn = header.column.id === "__actions";
-										const canSort = header.column.getCanSort();
 										const sorted = header.column.getIsSorted();
 										const headerAlign = getHeaderAlign(config);
 										const headerInset = getHeaderInset(config);
@@ -1212,8 +1230,6 @@ export function DataTable<TData>({
 														? "true"
 														: undefined
 												}
-												cursor={canSort ? "pointer" : undefined}
-												onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
 												{...config?.headerProps}
 											>
 												<HStack

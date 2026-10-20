@@ -253,6 +253,8 @@ const sanitizeSystemStats = (value: SystemStats | undefined): SystemStats | null
 		panel_total_bandwidth: toFiniteNumber(raw.panel_total_bandwidth),
 		incoming_bandwidth_speed: toFiniteNumber(raw.incoming_bandwidth_speed),
 		outgoing_bandwidth_speed: toFiniteNumber(raw.outgoing_bandwidth_speed),
+		total_incoming_bandwidth_speed: toFiniteNumber(raw.total_incoming_bandwidth_speed),
+		total_outgoing_bandwidth_speed: toFiniteNumber(raw.total_outgoing_bandwidth_speed),
 		memory: safeUsageStats(raw.memory),
 		swap: safeUsageStats(raw.swap),
 		disk: safeUsageStats(raw.disk),
@@ -1483,9 +1485,11 @@ export const Statistics: FC<BoxProps> = (props) => {
 	const [historyPayload, setHistoryPayload] = useState<HistoryModalPayload | null>(null);
 	const [historyInterval, setHistoryInterval] = useState(HISTORY_INTERVALS[0].seconds);
 	const [userTab, setUserTab] = useState<"all" | "mine">("all");
+	const [bandwidthScope, setBandwidthScope] = useState<"master" | "total">("total");
 	const { colorMode } = useColorMode();
 
 	const canSeeGlobal = userData.role === AdminRole.Sudo || userData.role === AdminRole.FullAccess;
+	const showTotalBandwidth = canSeeGlobal && bandwidthScope === "total";
 	const diagnosticsQuery = useSystemDiagnostics(canSeeGlobal);
 	const criticalIssues = dashboardDiagnostics(diagnosticsQuery.data || [], diagnosticsQuery.isSuccess ? undefined : systemData || undefined);
 	const hasXrayError = criticalIssues.some((issue) =>
@@ -2108,67 +2112,130 @@ export const Statistics: FC<BoxProps> = (props) => {
 						</HStack>
 					}
 					action={
-						<Button
-							size="xs"
-							h="22px"
-							px={2.5}
-							fontSize="11px"
-							variant="ghost"
-							borderRadius="full"
-							bg="panel.elevated"
-							color={colorMode === "light" ? "panel.textSecondary" : "panel.textMuted"}
-							fontWeight={colorMode === "light" ? "600" : "500"}
-							transition="all 0.2s ease"
-							_groupHover={{
-								md: {
-									bg: "panel.surface",
-									color: colorMode === "light" ? "panel.text" : "panel.textSecondary",
-								},
-							}}
-							_hover={{
-								md: {
-									bg: "panel.border !important",
-									color: "panel.text !important",
-								},
-							}}
-							_active={{
-								bg: "panel.borderStrong !important",
-							}}
-							_focusVisible={{
-								outline: "2px solid var(--rb-panel-accent)",
-								outlineOffset: "2px",
-							}}
-							position="relative"
-							_after={{
-								content: '""',
-								position: "absolute",
-								top: "-10px",
-								bottom: "-10px",
-								left: "-10px",
-								right: "-10px",
-							}}
-							onClick={() =>
-								openHistory({
-									type: "network",
-									title: t("dashboard.system.bandwidthSpeed"),
-									networkEntries: systemData.network_history,
-								})
-							}
-						>
-							{t("dashboard.system.viewHistory")}
-						</Button>
+						<HStack spacing={2}>
+							{canSeeGlobal ? (
+								<HStack spacing={0.5} bg="panel.elevated" p={0.5} borderRadius="8px" position="relative" transition="all 0.25s ease">
+									<Box position="relative">
+										{bandwidthScope === "master" && (
+											<motion.div
+												layoutId="bandwidthScopeTabPill"
+												style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, borderRadius: "6px", backgroundColor: "var(--rb-panel-accent)", border: "1px solid var(--rb-panel-accent)", boxShadow: "0 1px 3px rgba(0,0,0,0.12)", zIndex: 1 }}
+												transition={{ type: "tween", ease: "easeInOut", duration: 0.25 }}
+											/>
+										)}
+										<Button
+											size="xs"
+											h="22px"
+											px={2.5}
+											borderRadius="6px"
+											fontSize="11px"
+											fontWeight="600"
+											variant="ghost"
+											bg="transparent !important"
+											color={bandwidthScope === "master" ? "white" : "panel.text"}
+											position="relative"
+											zIndex={2}
+											transition="all 0.2s ease"
+											_focusVisible={{ outline: "2px solid var(--rb-panel-accent)", outlineOffset: "2px" }}
+											onClick={() => setBandwidthScope("master")}
+										>
+											{t("dashboard.system.bandwidthScope.master")}
+										</Button>
+									</Box>
+									<Box position="relative">
+										{bandwidthScope === "total" && (
+											<motion.div
+												layoutId="bandwidthScopeTabPill"
+												style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, borderRadius: "6px", backgroundColor: "var(--rb-panel-accent)", border: "1px solid var(--rb-panel-accent)", boxShadow: "0 1px 3px rgba(0,0,0,0.12)", zIndex: 1 }}
+												transition={{ type: "tween", ease: "easeInOut", duration: 0.25 }}
+											/>
+										)}
+										<Button
+											size="xs"
+											h="22px"
+											px={2.5}
+											borderRadius="6px"
+											fontSize="11px"
+											fontWeight="600"
+											variant="ghost"
+											bg="transparent !important"
+											color={bandwidthScope === "total" ? "white" : "panel.text"}
+											position="relative"
+											zIndex={2}
+											transition="all 0.2s ease"
+											_focusVisible={{ outline: "2px solid var(--rb-panel-accent)", outlineOffset: "2px" }}
+											onClick={() => setBandwidthScope("total")}
+											title={t("dashboard.system.bandwidthScope.totalHint")}
+										>
+											{t("dashboard.system.bandwidthScope.total")}
+										</Button>
+									</Box>
+								</HStack>
+							) : null}
+							{!showTotalBandwidth ? (
+								<Button
+									size="xs"
+									h="22px"
+									px={2.5}
+									fontSize="11px"
+									variant="ghost"
+									borderRadius="full"
+									bg="panel.elevated"
+									color={colorMode === "light" ? "panel.textSecondary" : "panel.textMuted"}
+									fontWeight={colorMode === "light" ? "600" : "500"}
+									transition="all 0.2s ease"
+									_groupHover={{
+										md: {
+											bg: "panel.surface",
+											color: colorMode === "light" ? "panel.text" : "panel.textSecondary",
+										},
+									}}
+									_hover={{
+										md: {
+											bg: "panel.border !important",
+											color: "panel.text !important",
+										},
+									}}
+									_active={{
+										bg: "panel.borderStrong !important",
+									}}
+									_focusVisible={{
+										outline: "2px solid var(--rb-panel-accent)",
+										outlineOffset: "2px",
+									}}
+									position="relative"
+									_after={{
+										content: '""',
+										position: "absolute",
+										top: "-10px",
+										bottom: "-10px",
+										left: "-10px",
+										right: "-10px",
+									}}
+									onClick={() =>
+										openHistory({
+											type: "network",
+											title: t("dashboard.system.bandwidthSpeed"),
+											networkEntries: systemData.network_history,
+										})
+									}
+								>
+									{t("dashboard.system.viewHistory")}
+								</Button>
+							) : null}
+						</HStack>
 					}
 				>
 					<Stack spacing={3}>
 						<SpeedItem
 							icon={<ArrowDownTrayIcon width={13} />}
 							label={t("dashboard.system.incomingSpeed")}
-							value={`${formatBytes(systemData.incoming_bandwidth_speed)}/s`}
+							value={`${formatBytes(showTotalBandwidth ? (systemData.total_incoming_bandwidth_speed ?? 0) : systemData.incoming_bandwidth_speed)}/s`}
 						/>
 						<SpeedItem
 							icon={<ArrowUpTrayIcon width={13} />}
 							label={t("dashboard.system.outgoingSpeed")}
-							value={`${formatBytes(systemData.outgoing_bandwidth_speed)}/s`}
+							value={`${formatBytes(showTotalBandwidth ? (systemData.total_outgoing_bandwidth_speed ?? 0) : systemData.outgoing_bandwidth_speed)}/s`}
 						/>
 					</Stack>
 				</SectionCard>

@@ -39,6 +39,7 @@ import {
 	ExpandedHeading,
 	ExpandedMeta,
 } from "components/ui/ExpandedPanel";
+import { DataTableSortMenu, type SortOption } from "components/ui/DataTableSortMenu";
 import {
 	PlusIcon as AddIcon,
 	ArrowDownTrayIcon,
@@ -76,6 +77,7 @@ import { useMutation, useQuery, useQueryClient } from "react-query";
 import { useNavigate } from "react-router-dom";
 import { fetch as apiFetch } from "service/http";
 import { formatBytes } from "utils/formatByte";
+import { summarizeNodes } from "utils/resourceSummary";
 import {
 	DEFAULT_SEARCH_MATCH_OPTIONS,
 	matchesAnySearch,
@@ -91,8 +93,10 @@ import {
 import {
 	DataTable,
 	PageLoadingSkeleton,
+	ResourceSummaryPills,
 	type DataTableColumn,
 	type DataTableRowAction,
+	type ResourceSummaryItem,
 } from "../components/ui";
 import { CoreVersionDialog } from "../components/CoreVersionDialog";
 import type { BuildCatalog } from "../components/BuildVersionSelect";
@@ -1795,14 +1799,57 @@ export const NodesPage: FC = () => {
 		});
 	};
 
-	const nodeSummary = useMemo(() => {
-		const items = nodes ?? [];
-		return {
-			total: items.length,
-			connected: items.filter((node) => node.status === "connected").length,
-			disabled: items.filter((node) => node.status === "disabled").length,
-		};
-	}, [nodes]);
+	const nodeSummaryItems = useMemo<ResourceSummaryItem[]>(() => {
+		const summary = summarizeNodes(nodes ?? []);
+		const items: ResourceSummaryItem[] = [
+			{ label: t("total"), value: summary.total, colorScheme: "gray" },
+			{
+				label: t("status.connected"),
+				value: summary.connected,
+				colorScheme: "green",
+			},
+		];
+		if (summary.connecting > 0) {
+			items.push({
+				label: t("nodeModal.status.connecting"),
+				value: summary.connecting,
+				colorScheme: "yellow",
+			});
+		}
+		if (summary.error > 0) {
+			items.push({
+				label: t("nodeModal.status.error"),
+				value: summary.error,
+				colorScheme: "red",
+			});
+		}
+		if (summary.limited > 0) {
+			items.push({
+				label: t("status.limited"),
+				value: summary.limited,
+				colorScheme: "orange",
+			});
+		}
+		items.push(
+			{
+				label: t("nodes.disabled"),
+				value: summary.disabled,
+				colorScheme: "gray",
+			},
+			{
+				label: t("summary.usage"),
+				value: formatBytes(summary.usage, 2),
+				colorScheme: "blue",
+				helper: `↑ ${formatBytes(summary.upload, 2)} · ↓ ${formatBytes(summary.download, 2)}`,
+			},
+			{
+				label: t("summary.speed"),
+				value: `↑ ${formatBytes(summary.uploadSpeed, 2)}/s · ↓ ${formatBytes(summary.downloadSpeed, 2)}/s`,
+				colorScheme: "cyan",
+			},
+		);
+		return items;
+	}, [nodes, t]);
 
 	const hasConnectedNodes = useMemo(
 		() =>
@@ -2087,6 +2134,7 @@ export const NodesPage: FC = () => {
 			},
 			{
 				id: "address",
+				sortable: false,
 				header: t("nodes.nodeAddress"),
 				accessor: "address",
 				priority: "high",
@@ -2157,6 +2205,7 @@ export const NodesPage: FC = () => {
 			},
 			{
 				id: "runtime",
+				sortable: false,
 				header: t("nodes.columns.nodeRuntime"),
 				accessor: (node) =>
 					[node.node_install_mode, node.node_update_channel]
@@ -2440,6 +2489,7 @@ export const NodesPage: FC = () => {
 			},
 			{
 				id: "certificate",
+				sortable: false,
 				header: t("nodes.certificate"),
 				accessor: getNodeInstallBundle,
 				priority: "low",
@@ -2666,10 +2716,27 @@ export const NodesPage: FC = () => {
 		() => [{ id: sortKey, desc: sortDirection === "desc" }],
 		[sortDirection, sortKey],
 	);
+	const nodeSortOptions = useMemo<SortOption[]>(
+		() => [
+			{ id: "name", label: t("nodes.nodeName"), type: "text" },
+			{ id: "status", label: t("status"), type: "text" },
+			{ id: "uptime", label: t("redisUptime"), type: "number" },
+			{ id: "usage", label: t("nodes.trafficLimit"), type: "number" },
+			{ id: "bandwidth", label: t("nodes.bandwidthSpeed"), type: "number" },
+			{ id: "cpu", label: t("nodes.cpu"), type: "number" },
+			{ id: "ram", label: t("nodes.ram"), type: "number" },
+		],
+		[t],
+	);
 
 	const handleNodeTableSorting = (nextSorting: SortingState) => {
 		const next = nextSorting[0];
-		if (!next || !isNodeSortKey(next.id)) return;
+		if (!next) {
+			setSortKey("name");
+			setSortDirection("asc");
+			return;
+		}
+		if (!isNodeSortKey(next.id)) return;
 		setSortKey(next.id);
 		setSortDirection(next.desc ? "desc" : "asc");
 	};
@@ -2799,17 +2866,7 @@ export const NodesPage: FC = () => {
 						minW={{ base: "0", xl: "210px" }}
 					>
 						<Text fontWeight="semibold">{t("nodes.manageNodesHeader")}</Text>
-						<HStack spacing={2} flexWrap="wrap">
-							<Tag size="sm" colorScheme="gray" variant="subtle">
-								{t("total")}: {nodeSummary.total}
-							</Tag>
-							<Tag size="sm" colorScheme="green" variant="subtle">
-								{t("status.connected")}: {nodeSummary.connected}
-							</Tag>
-							<Tag size="sm" colorScheme="gray" variant="subtle">
-								{t("nodes.disabled")}: {nodeSummary.disabled}
-							</Tag>
-						</HStack>
+						<ResourceSummaryPills items={nodeSummaryItems} />
 					</VStack>
 					<SimpleGrid
 						columns={{ base: 2, md: 4 }}
@@ -2932,33 +2989,11 @@ export const NodesPage: FC = () => {
 							<option value="docker">{t("nodes.installMode.docker")}</option>
 							<option value="unknown">{t("status.unknown")}</option>
 						</Select>
-						<Select
-							size="sm"
-							value={`${sortKey}.${sortDirection}`}
-							onChange={(event) => {
-								const [nextKey, nextDirection] = event.target.value.split(".");
-								setSortKey(nextKey as NodeSortKey);
-								setSortDirection(nextDirection as NodeSortDirection);
-							}}
-							w={{ base: "calc(50% - 4px)", md: "170px" }}
-						>
-							<option value="name.asc">{t("nodes.sort.nameAsc")}</option>
-							<option value="name.desc">{t("nodes.sort.nameDesc")}</option>
-							<option value="usage.asc">{t("nodes.sort.usageAsc")}</option>
-							<option value="usage.desc">{t("nodes.sort.usageDesc")}</option>
-							<option value="status.asc">{t("nodes.sort.statusAsc")}</option>
-							<option value="status.desc">{t("nodes.sort.statusDesc")}</option>
-							<option value="bandwidth.asc">
-								{t("nodes.sort.bandwidthAsc")}
-							</option>
-							<option value="bandwidth.desc">
-								{t("nodes.sort.bandwidthDesc")}
-							</option>
-							<option value="cpu.asc">{t("nodes.sort.cpuAsc")}</option>
-							<option value="cpu.desc">{t("nodes.sort.cpuDesc")}</option>
-							<option value="ram.asc">{t("nodes.sort.ramAsc")}</option>
-							<option value="ram.desc">{t("nodes.sort.ramDesc")}</option>
-						</Select>
+						<DataTableSortMenu
+							options={nodeSortOptions}
+							sorting={nodeSorting}
+							onSortingChange={handleNodeTableSorting}
+						/>
 						<Box
 							w={{ base: "calc(50% - 4px)", md: "auto" }}
 							display="flex"
@@ -3025,6 +3060,7 @@ export const NodesPage: FC = () => {
 					renderExpandedRow={renderExpandedNode}
 					sorting={nodeSorting}
 					onSortingChange={handleNodeTableSorting}
+					showSortMenu={false}
 					manualSorting
 					pagination={nodesPagination}
 					selectedLabel={t("nodes.selectedCount", {

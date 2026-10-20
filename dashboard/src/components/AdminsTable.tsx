@@ -42,6 +42,7 @@ import { NoSymbolIcon } from "@heroicons/react/24/solid";
 import type { SortingState } from "@tanstack/react-table";
 import classNames from "classnames";
 import { useAdminsStore } from "contexts/AdminsContext";
+import { useContainerMinWidths } from "hooks/useContainerMinWidths";
 import useGetUser from "hooks/useGetUser";
 import {
 	type FC,
@@ -49,9 +50,11 @@ import {
 	useCallback,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { fetch } from "service/http";
 import type { Admin } from "types/Admin";
 import {
 	AdminManagementPermission,
@@ -60,6 +63,7 @@ import {
 	AdminTrafficLimitMode,
 } from "types/Admin";
 import { formatBytes } from "utils/formatByte";
+import { summarizeAdmins } from "utils/resourceSummary";
 import {
 	generateErrorMessage,
 	generateSuccessMessage,
@@ -86,6 +90,21 @@ const ADMIN_TRAFFIC_OPTIONS = [
 	{ label: "1TB", gigabytes: 1024 },
 	{ label: "2TB", gigabytes: 2048 },
 	{ label: "5TB", gigabytes: 5120 },
+];
+
+const QUICK_ACTIONS_MIN_TABLE_WIDTH = 1250;
+const SPEED_MIN_TABLE_WIDTH = 1100;
+type AdminSpeedMap = Record<
+	string,
+	{ upload_speed: number; download_speed: number }
+>;
+
+const QUICK_ACTION_IDS = [
+	"edit",
+	"permissions",
+	"enable",
+	"disable",
+	"delete",
 ];
 
 const iconProps = {
@@ -202,7 +221,6 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 	const loading = useAdminsStore((state) => state.loading);
 	const total = useAdminsStore((state) => state.total);
 	const filters = useAdminsStore((state) => state.filters);
-	const onFilterChange = useAdminsStore((state) => state.onFilterChange);
 	const fetchAdmins = useAdminsStore((state) => state.fetchAdmins);
 	const deleteAdmin = useAdminsStore((state) => state.deleteAdmin);
 	const resetUsage = useAdminsStore((state) => state.resetUsage);
@@ -661,11 +679,17 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 		: (sx as Record<string, unknown> | undefined);
 	const baseTableSx: Record<string, unknown> = {
 		width: "100%",
-		tableLayout: "fixed",
-		"& th, & td": {
-			px: { base: 2, xl: 2.5 },
-			py: 2.5,
+		"& th, & .rb-data-table-row > td": {
+			whiteSpace: "nowrap",
+			paddingInline: "clamp(6px, 0.8vw, 14px) !important",
 			verticalAlign: "middle",
+		},
+		"& th.rb-select-cell, & td.rb-select-cell, & th.rb-actions-cell, & td.rb-actions-cell":
+			{
+				paddingInline: "4px !important",
+			},
+		"& th[data-col='quick_actions'], & td[data-col='quick_actions']": {
+			paddingInlineEnd: "0px !important",
 		},
 	};
 	const tableClassName = isRTL
@@ -692,8 +716,12 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 		const limitedCount = summaryAdmins.filter(
 			(admin) => !getAdminIsExpired(admin, nowUnix) && getAdminIsLimited(admin),
 		).length;
+		const totals = hasCompleteSummary ? summarizeAdmins(summaryAdmins) : null;
 		return {
 			totalCount: adminOptions.length || total,
+			usersTotal: totals ? totals.users : null,
+			onlineUsersTotal: totals ? totals.online : null,
+			usageTotal: totals ? totals.usage : null,
 			fullAccessCount: hasCompleteSummary
 				? summaryAdmins.filter((admin) => admin.role === AdminRole.FullAccess)
 						.length
@@ -777,6 +805,24 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 			value: formatSummaryCount(summaryData.disabledCount),
 			colorScheme: "gray",
 		},
+		{
+			label: t("users"),
+			value: formatSummaryCount(summaryData.usersTotal),
+			colorScheme: "orange",
+		},
+		{
+			label: t("onlineStatus.online"),
+			value: formatSummaryCount(summaryData.onlineUsersTotal),
+			colorScheme: "teal",
+		},
+		{
+			label: t("summary.usage"),
+			value:
+				summaryData.usageTotal === null
+					? "-"
+					: formatBytes(summaryData.usageTotal),
+			colorScheme: "blue",
+		},
 	];
 
 	const skeletonCount = filters.limit || 5;
@@ -787,21 +833,29 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 		return id ? [{ id, desc }] : [];
 	}, [filters.sort]);
 
-	const handleAdminTableSorting = (nextSorting: SortingState) => {
-		const next = nextSorting[0];
-		if (!next) return;
-		const allowedSorts = new Set([
-			"username",
-			"users_count",
-			"data_usage",
-			"data_limit",
-		]);
-		if (!allowedSorts.has(next.id)) return;
-		onFilterChange({
-			sort: next.desc ? `-${next.id}` : next.id,
-			offset: 0,
-		});
-	};
+	const isWide = useBreakpointValue({ base: false, xl: true }) ?? false;
+	const [adminSpeeds, setAdminSpeeds] = useState<AdminSpeedMap>({});
+	useEffect(() => {
+		let active = true;
+		const loadSpeeds = () => {
+			fetch<AdminSpeedMap>("/admins/speeds")
+				.then((data) => {
+					if (active) setAdminSpeeds(data || {});
+				})
+				.catch(() => undefined);
+		};
+		loadSpeeds();
+		const timer = window.setInterval(loadSpeeds, 5000);
+		return () => {
+			active = false;
+			window.clearInterval(timer);
+		};
+	}, []);
+	const [tableSectionRef, [showQuickActions, showSpeed]] =
+		useContainerMinWidths(QUICK_ACTIONS_MIN_TABLE_WIDTH, SPEED_MIN_TABLE_WIDTH);
+	const rowActionsRef = useRef<(admin: Admin) => DataTableRowAction<Admin>[]>(
+		() => [],
+	);
 
 	const adminColumns = useMemo<DataTableColumn<Admin>[]>(
 		() => [
@@ -812,7 +866,7 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 				sortable: true,
 				isPrimary: true,
 				priority: "primary",
-				width: "13%",
+				width: "1%",
 				truncate: true,
 				tooltip: true,
 				cellAlign: "start",
@@ -822,6 +876,7 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 					<Text
 						fontWeight="semibold"
 						noOfLines={1}
+						maxW="10rem"
 						dir="ltr"
 						sx={{ unicodeBidi: "isolate" }}
 						color="panel.text"
@@ -834,7 +889,7 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 				id: "status",
 				header: t("status"),
 				priority: "high",
-				width: "9%",
+				width: "1%",
 				headerAlign: "center",
 				mobilePriority: 1,
 				mobileMetaLabel: t("status"),
@@ -843,8 +898,8 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 			{
 				id: "role",
 				header: t("core.role"),
-				priority: "high",
-				width: "9%",
+				priority: "medium",
+				width: "1%",
 				mobilePriority: 2,
 				mobileMetaLabel: t("core.role"),
 				cell: (admin) => <AdminRoleBadge role={admin.role} />,
@@ -854,28 +909,29 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 				header: t("admins.details.activeLabel"),
 				sortable: true,
 				priority: "high",
-				width: "7%",
+				width: "1%",
 				headerAlign: "center",
 				mobilePriority: 3,
 				mobileMetaLabel: t("admins.details.activeLabel"),
-				cell: (admin) => {
-					return (
-						<Text
-							fontSize="sm"
-							fontWeight="semibold"
-							dir="ltr"
-							sx={{ unicodeBidi: "isolate" }}
-						>
-							{formatCount(admin.active_users ?? 0, locale)}
-						</Text>
-					);
-				},
+				cell: (admin) => (
+					<Text
+						fontSize="sm"
+						fontWeight="semibold"
+						dir="ltr"
+						sx={{ unicodeBidi: "isolate" }}
+					>
+						{formatCount(admin.active_users ?? 0, locale)}
+						<chakra.span color="panel.textMuted" fontWeight="medium">
+							/{formatCount(admin.users_count ?? 0, locale)}
+						</chakra.span>
+					</Text>
+				),
 			},
 			{
 				id: "online",
 				header: t("admins.details.onlineLabel"),
 				priority: "medium",
-				width: "6%",
+				width: "1%",
 				headerAlign: "center",
 				mobilePriority: 4,
 				mobileMetaLabel: t("admins.details.onlineLabel"),
@@ -894,7 +950,8 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 				id: "services",
 				header: t("services.title"),
 				priority: "medium",
-				width: "7%",
+				desktopVisible: isWide,
+				width: "1%",
 				mobilePriority: 5,
 				mobileMetaLabel: t("services.title"),
 				cell: (admin) => (
@@ -910,25 +967,58 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 				header: t("usersTable.traffic"),
 				sortable: true,
 				priority: "high",
-				width: "16%",
-				headerAlign: "center",
+				minWidth: "120px",
 				cellAlign: "start",
 				mobilePriority: 6,
 				mobileSummary: true,
 				mobileMetaLabel: t("usersTable.traffic"),
 				cell: (admin) => (
-					<UserUsageBar
-						variant="inline"
-						used={getAdminEffectiveUsage(admin)}
-						total={admin.data_limit ?? null}
-					/>
+					<Box maxW="32rem">
+						<UserUsageBar
+							variant="stacked"
+							used={getAdminEffectiveUsage(admin)}
+							total={admin.data_limit ?? null}
+						/>
+					</Box>
 				),
+			},
+			{
+				id: "speed",
+				header: t("summary.speed"),
+				priority: "medium",
+				width: "1%",
+				desktopVisible: showSpeed,
+				hideOnMobile: true,
+				cell: (admin) => {
+					const speed = adminSpeeds[String(admin.id)];
+					return (
+						<Stack
+							spacing={0}
+							lineHeight="1.35"
+							whiteSpace="nowrap"
+							fontSize="xs"
+							dir="ltr"
+							sx={{
+								fontVariantNumeric: "tabular-nums",
+								unicodeBidi: "isolate",
+							}}
+						>
+							<Text color="teal.400">
+								↑ {formatBytes(speed?.upload_speed ?? 0)}/s
+							</Text>
+							<Text color="blue.400">
+								↓ {formatBytes(speed?.download_speed ?? 0)}/s
+							</Text>
+						</Stack>
+					);
+				},
 			},
 			{
 				id: "remaining_traffic",
 				header: t("usersTable.remainingTraffic"),
 				priority: "medium",
-				width: "9%",
+				desktopVisible: isWide,
+				width: "1%",
 				mobilePriority: 7,
 				mobileMetaLabel: t("usersTable.remainingTraffic"),
 				cell: (admin) => (
@@ -952,13 +1042,54 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 				id: "expire",
 				header: t("expire"),
 				priority: "medium",
-				width: "10%",
+				width: "1%",
 				mobilePriority: 8,
 				mobileMetaLabel: t("expire"),
 				cell: (admin) => <UserExpiryCountdown expire={admin.expire} />,
 			},
+			{
+				id: "quick_actions",
+				header: "",
+				priority: "medium",
+				width: "1%",
+				desktopVisible: showQuickActions,
+				hideOnMobile: true,
+				cell: (admin) => (
+					<HStack spacing={0.5} onClick={(event) => event.stopPropagation()}>
+						{rowActionsRef
+							.current(admin)
+							.filter((action) => QUICK_ACTION_IDS.includes(action.id))
+							.map((action) => (
+								<Tooltip key={action.id} label={action.label}>
+									<span>
+										<IconButton
+											className="rb-row-action"
+											aria-label={String(action.label)}
+											icon={action.icon}
+											variant="ghost"
+											size="sm"
+											minW="28px"
+											h="28px"
+											isDisabled={
+												typeof action.isDisabled === "function"
+													? action.isDisabled(admin)
+													: action.isDisabled
+											}
+											onClick={() => action.onClick?.(admin)}
+											sx={
+												action.isDanger
+													? { "&&&:hover": { color: "red.400 !important" } }
+													: undefined
+											}
+										/>
+									</span>
+								</Tooltip>
+							))}
+					</HStack>
+				),
+			},
 		],
-		[locale, t],
+		[adminSpeeds, isWide, showQuickActions, showSpeed, locale, t],
 	);
 
 	const adminRowActions = (admin: Admin): DataTableRowAction<Admin>[] => {
@@ -1084,6 +1215,7 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 
 		return actions;
 	};
+	rowActionsRef.current = adminRowActions;
 
 	const [expandedAdminUsername, setExpandedAdminUsername] = useState<string | null>(null);
 	const isDesktop = useBreakpointValue({ base: false, md: true }) ?? false;
@@ -1138,7 +1270,7 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 					{toolbar}
 				</ResourceListCard>
 
-				<Box className="rb-admins-section">
+				<Box className="rb-admins-section" ref={tableSectionRef}>
 				<DataTable
 					ariaLabel={t("admins")}
 					data={admins}
@@ -1162,14 +1294,14 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 					rowActions={adminRowActions}
 					actionsDisplay="menu"
 					actionsPlacement="end"
-					actionsColumnWidth="60px"
+					actionsColumnWidth={showQuickActions ? "40px" : "60px"}
 					showActionsOnHover
 									onRowClick={isDesktop ? (admin) => setExpandedAdminUsername((current) => (current === admin.username ? null : admin.username)) : undefined}
 									isRowExpanded={isDesktop ? (admin) => expandedAdminUsername === admin.username : undefined}
 									renderExpandedRow={isDesktop ? renderExpandedAdmin : undefined}
 					sorting={adminSorting}
-					onSortingChange={handleAdminTableSorting}
 					manualSorting
+					showSortMenu={false}
 					dir={isRTL ? "rtl" : "ltr"}
 					mobileBreakpoint="md"
 					tableProps={tableProps}

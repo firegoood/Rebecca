@@ -1,3 +1,5 @@
+import type { SortingState } from "@tanstack/react-table";
+import { buildSortOptions, DataTableSortMenu } from "components/ui/DataTableSortMenu";
 import {
 	Alert,
 	AlertIcon,
@@ -30,12 +32,14 @@ import {
 	protocolOptions,
 	type RawInbound,
 } from "utils/inbounds";
+import { getInboundTargetIds } from "utils/inboundTargets";
 import { SizeFormatter } from "utils/outbound";
 import {
 	DEFAULT_SEARCH_MATCH_OPTIONS,
 	matchesAnySearch,
 } from "utils/searchMatch";
 import { sortByTraffic, type TrafficSortOrder } from "utils/trafficSort";
+import { type InboundSpeedMap, summarizeInbounds } from "utils/resourceSummary";
 import { SearchableTagSelect } from "../common/SearchableTagSelect";
 import { SearchInput } from "../common/SearchInput";
 import { ConfirmDialog, DeleteConfirmDialog } from "../dialogs/ConfirmDialog";
@@ -77,17 +81,11 @@ const normalizeInboundTargets = (inbound: RawInbound): RawInbound => ({
 	),
 });
 
-const getInboundTargetIds = (inbound: RawInbound) =>
-	inbound.effective_targets?.length
-		? inbound.effective_targets
-		: inbound.targets?.length
-			? inbound.targets
-			: ["master"];
-
 export const InboundsManager: FC = () => {
 	const { t } = useTranslation();
 	const toast = useToast();
 	const [inbounds, setInbounds] = useState<RawInbound[]>([]);
+	const [speeds, setSpeeds] = useState<InboundSpeedMap>({});
 	const [configTargets, setConfigTargets] = useState<CoreConfigTarget[]>([]);
 	const [isLoading, setIsLoading] = useState(true);
 	const [isMutating, setIsMutating] = useState(false);
@@ -127,6 +125,23 @@ export const InboundsManager: FC = () => {
 	useEffect(() => {
 		loadInbounds();
 	}, [loadInbounds]);
+
+	useEffect(() => {
+		let active = true;
+		const loadSpeeds = () => {
+			fetch<InboundSpeedMap>("/inbounds/speeds")
+				.then((data) => {
+					if (active) setSpeeds(data || {});
+				})
+				.catch(() => undefined);
+		};
+		loadSpeeds();
+		const timer = window.setInterval(loadSpeeds, 5000);
+		return () => {
+			active = false;
+			window.clearInterval(timer);
+		};
+	}, []);
 
 	const filtered = useMemo(() => {
 		const matches = inbounds.filter((inbound) => {
@@ -467,6 +482,9 @@ export const InboundsManager: FC = () => {
 			(a, b) => b[1] - a[1],
 		)[0];
 
+		const totals = summarizeInbounds(filtered, speeds);
+		const isFiltered = filtered.length !== inbounds.length;
+
 		return [
 			{
 				label: t("total"),
@@ -492,13 +510,25 @@ export const InboundsManager: FC = () => {
 				colorScheme: "green",
 			},
 			{
+				label: isFiltered ? t("summary.filteredUsage") : t("summary.usage"),
+				value: SizeFormatter.sizeFormat(totals.total),
+				colorScheme: "blue",
+				helper: `↑ ${SizeFormatter.sizeFormat(totals.upload)} · ↓ ${SizeFormatter.sizeFormat(totals.download)}`,
+			},
+			{
+				label: t("summary.speed"),
+				value: `↑ ${SizeFormatter.sizeFormat(totals.uploadSpeed)}/s · ↓ ${SizeFormatter.sizeFormat(totals.downloadSpeed)}/s`,
+				colorScheme: "cyan",
+			},
+			{
 				label: t("usersPage.filtered"),
 				value: filtered.length,
 				colorScheme: "teal",
 			},
 		];
-	}, [filtered.length, inbounds, t]);
+	}, [filtered, inbounds, speeds, t]);
 
+	const [inboundSorting, setInboundSorting] = useState<SortingState>([]);
 	const inboundColumns = useMemo<DataTableColumn<RawInbound>[]>(
 		() => [
 			{
@@ -567,6 +597,7 @@ export const InboundsManager: FC = () => {
 			},
 			{
 				id: "network",
+				sortValue: (inbound) => String(inbound.streamSettings?.network ?? ""),
 				header: t("inbounds.network"),
 				priority: "medium",
 				width: "110px",
@@ -577,6 +608,7 @@ export const InboundsManager: FC = () => {
 			},
 			{
 				id: "security",
+				sortValue: (inbound) => String(inbound.streamSettings?.security ?? ""),
 				header: t("inbounds.security"),
 				priority: "medium",
 				width: "120px",
@@ -596,6 +628,7 @@ export const InboundsManager: FC = () => {
 			},
 			{
 				id: "traffic",
+				sortValue: (inbound) => getInboundTraffic(inbound).total,
 				header: t("inbounds.traffic"),
 				priority: "medium",
 				width: "175px",
@@ -626,7 +659,43 @@ export const InboundsManager: FC = () => {
 				},
 			},
 			{
+				id: "speed",
+				sortValue: (inbound) => {
+					const speed = speeds[inbound.tag];
+					return (speed?.upload_speed ?? 0) + (speed?.download_speed ?? 0);
+				},
+				header: t("inbounds.speed"),
+				priority: "medium",
+				width: "175px",
+				maxWidth: "195px",
+				mobilePriority: 6,
+				mobileMetaLabel: t("inbounds.speed"),
+				cell: (inbound) => {
+					const speed = speeds[inbound.tag];
+					return (
+						<HStack
+							spacing={3}
+							whiteSpace="nowrap"
+							fontSize="xs"
+							dir="ltr"
+							sx={{
+								fontVariantNumeric: "tabular-nums",
+								unicodeBidi: "isolate",
+							}}
+						>
+							<Text color="teal.400">
+								↑ {SizeFormatter.sizeFormat(speed?.upload_speed ?? 0)}/s
+							</Text>
+							<Text color="blue.400">
+								↓ {SizeFormatter.sizeFormat(speed?.download_speed ?? 0)}/s
+							</Text>
+						</HStack>
+					);
+				},
+			},
+			{
 				id: "sniffing",
+				sortValue: (inbound) => (inbound.sniffing?.enabled ? 1 : 0),
 				header: t("inbounds.sniffing"),
 				priority: "low",
 				hideBelow: "xl",
@@ -647,6 +716,7 @@ export const InboundsManager: FC = () => {
 			},
 			{
 				id: "targets",
+				sortValue: (inbound) => getInboundTargetIds(inbound).length,
 				header: t("inbounds.targets"),
 				priority: "low",
 				hideBelow: "lg",
@@ -691,7 +761,7 @@ export const InboundsManager: FC = () => {
 				},
 			},
 		],
-		[t, targetNameById],
+		[t, targetNameById, speeds],
 	);
 
 	const inboundRowActions = (
@@ -786,6 +856,11 @@ export const InboundsManager: FC = () => {
 						matchOptions={searchMatch}
 						onMatchOptionsChange={setSearchMatch}
 					/>
+					<DataTableSortMenu
+						options={buildSortOptions(inboundColumns, filtered)}
+						sorting={inboundSorting}
+						onSortingChange={setInboundSorting}
+					/>
 					<SearchableTagSelect
 						size="sm"
 						width="190px"
@@ -836,6 +911,9 @@ export const InboundsManager: FC = () => {
 				ariaLabel={t("hostsPage.tabInbounds")}
 				data={filtered}
 				columns={inboundColumns}
+				sorting={inboundSorting}
+				onSortingChange={setInboundSorting}
+				showSortMenu={false}
 				getRowId={(inbound) => inbound.tag}
 				isLoading={isLoading}
 				loadingRows={5}

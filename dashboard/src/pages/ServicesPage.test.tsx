@@ -34,6 +34,7 @@ const services = Array.from({ length: 20 }, (_, index) => ({
 	description: null,
 	used_traffic: 0,
 	lifetime_used_traffic: 0,
+	usage_coefficient: 1,
 	host_count: 1,
 	user_count: 0,
 	has_hosts: true,

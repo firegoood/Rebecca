@@ -1,3 +1,5 @@
+import type { SortingState } from "@tanstack/react-table";
+import { buildSortOptions, DataTableSortMenu } from "components/ui/DataTableSortMenu";
 import {
 	Accordion,
 	AccordionButton,
@@ -75,6 +77,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { EntityNotePanel } from "components/EntityNotePanel";
 import { fetch as apiFetch } from "service/http";
 import {
 	cloneFinalMask,
@@ -1670,6 +1673,9 @@ const HostDetailModal: FC<HostDetailModalProps> = ({
 							</TabPanel>
 						</TabPanels>
 					</Tabs>
+					{!isCloneMode && host?.data.id ? (
+						<EntityNotePanel entityType="host" entityKey={host.data.id} />
+					) : null}
 				</XrayModalBody>
 				<XrayModalFooter justifyContent="space-between">
 					{isCloneMode ? (
@@ -2625,10 +2631,12 @@ export const HostsManager: FC = () => {
 		[],
 	);
 
+	const [hostSorting, setHostSorting] = useState<SortingState>([]);
 	const hostColumns = useMemo<DataTableColumn<HostState>[]>(
 		() => [
 			{
 				id: "remark",
+				sortValue: (host) => host.data.remark ?? "",
 				header: t("hostsPage.host"),
 				isPrimary: true,
 				priority: "primary",
@@ -2668,6 +2676,7 @@ export const HostsManager: FC = () => {
 			},
 			{
 				id: "status",
+				sortValue: (host) => (host.data.is_disabled ? 1 : 0),
 				header: t("usersTable.status"),
 				priority: "high",
 				width: "112px",
@@ -2691,6 +2700,7 @@ export const HostsManager: FC = () => {
 			},
 			{
 				id: "address",
+				sortValue: (host) => host.data.address ?? "",
 				header: t("hostsDialog.address"),
 				priority: "high",
 				width: { base: "210px", lg: "240px", xl: "280px" },
@@ -2703,6 +2713,7 @@ export const HostsManager: FC = () => {
 			},
 			{
 				id: "port",
+				sortValue: (host) => host.data.port ?? 0,
 				header: t("port"),
 				priority: "high",
 				width: "72px",
@@ -2725,6 +2736,7 @@ export const HostsManager: FC = () => {
 			},
 			{
 				id: "inbound",
+				sortValue: (host) => host.inboundTag ?? "",
 				header: t("hostsPage.inboundLabel"),
 				priority: "high",
 				width: { base: "150px", lg: "160px", xl: "190px" },
@@ -2757,6 +2769,7 @@ export const HostsManager: FC = () => {
 			},
 			{
 				id: "sni",
+				sortValue: (host) => host.data.sni ?? "",
 				header: t("hostsDialog.sni"),
 				priority: "low",
 				hideBelow: "xl",
@@ -2769,6 +2782,7 @@ export const HostsManager: FC = () => {
 			},
 			{
 				id: "request_host",
+				sortValue: (host) => host.data.host ?? "",
 				header: t("hostsDialog.host"),
 				priority: "low",
 				hideBelow: "xl",
@@ -2781,6 +2795,7 @@ export const HostsManager: FC = () => {
 			},
 			{
 				id: "security",
+				sortValue: (host) => host.data.security ?? "",
 				header: t("hostsDialog.security"),
 				priority: "low",
 				hideBelow: "xl",
@@ -2889,6 +2904,11 @@ export const HostsManager: FC = () => {
 						matchOptions={searchMatch}
 						onMatchOptionsChange={setSearchMatch}
 					/>
+					<DataTableSortMenu
+						options={buildSortOptions(hostColumns, displayedHosts)}
+						sorting={hostSorting}
+						onSortingChange={setHostSorting}
+					/>
 					<Checkbox
 						isChecked={includeDisabled}
 						onChange={(event) => setIncludeDisabled(event.target.checked)}
@@ -2902,6 +2922,9 @@ export const HostsManager: FC = () => {
 				ariaLabel={t("hostsPage.tabHosts")}
 				data={displayedHosts}
 				columns={hostColumns}
+				sorting={hostSorting}
+				onSortingChange={setHostSorting}
+				showSortMenu={false}
 				getRowId={(host) => host.uid}
 				isLoading={isInitialLoading}
 				loadingRows={5}

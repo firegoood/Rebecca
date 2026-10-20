@@ -46,6 +46,7 @@ import {
 	ArrowUpTrayIcon,
 	BoltIcon,
 	CheckCircleIcon,
+	ChevronDoubleUpIcon,
 	CloudArrowUpIcon,
 	TrashIcon as DeleteIcon,
 	PencilIcon as EditIcon,
@@ -78,6 +79,7 @@ import {
 import { useCoreSettings } from "contexts/CoreSettingsContext";
 import { useDashboard } from "contexts/DashboardContext";
 import useGetUser from "hooks/useGetUser";
+import { isMullvadOutbound } from "utils/mullvad";
 import { DEFAULT_SEARCH_MATCH_OPTIONS, matchesSearch } from "utils/searchMatch";
 import {
 	type FC,
@@ -92,7 +94,7 @@ import {
 } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { useTranslation } from "react-i18next";
-import { SiNordvpn, SiTorproject } from "react-icons/si";
+import { SiMullvad, SiNordvpn, SiTorproject } from "react-icons/si";
 import { useMutation, useQuery } from "react-query";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { fetch as apiFetch, getAPIErrorMessage } from "service/http";
@@ -133,6 +135,9 @@ const DnsPresetsModal = lazy(async () => ({
 const FakeDnsModal = lazy(async () => ({
 	default: (await import("../components/FakeDnsModal")).FakeDnsModal,
 }));
+const MullvadModal = lazy(async () => ({
+	default: (await import("../components/MullvadModal")).MullvadModal,
+}));
 const NordVPNModal = lazy(async () => ({
 	default: (await import("../components/NordVPNModal")).NordVPNModal,
 }));
@@ -170,6 +175,9 @@ const AddIconStyled = chakra(AddIcon, { baseStyle: { w: 3.5, h: 3.5 } });
 const DeleteIconStyled = chakra(DeleteIcon, { baseStyle: { w: 4, h: 4 } });
 const EditIconStyled = chakra(EditIcon, { baseStyle: { w: 4, h: 4 } });
 const ArrowUpIconStyled = chakra(ArrowUpIcon, { baseStyle: { w: 4, h: 4 } });
+const ChevronDoubleUpIconStyled = chakra(ChevronDoubleUpIcon, {
+	baseStyle: { w: 4, h: 4 },
+});
 const ArrowDownIconStyled = chakra(ArrowDownIcon, {
 	baseStyle: { w: 4, h: 4 },
 });
@@ -206,6 +214,11 @@ const MoreIconStyled = chakra(EllipsisHorizontalIcon, {
 const NordVPNIconStyled = () => (
 	<Box as="span" display="inline-flex" color="#4687ff">
 		{SiNordvpn({ size: 16, "aria-hidden": true })}
+	</Box>
+);
+const MullvadIconStyled = () => (
+	<Box as="span" display="inline-flex">
+		{SiMullvad({ size: 16, "aria-hidden": true })}
 	</Box>
 );
 const TorIconStyled: FC<{ size?: number }> = ({ size = 16 }) => (
@@ -809,6 +822,17 @@ export const CoreSettingsPage: FC = () => {
 		onOpen: onNordOpen,
 		onClose: onNordClose,
 	} = useDisclosure();
+	const {
+		isOpen: isMullvadOpen,
+		onOpen: onMullvadOpen,
+		onClose: onMullvadClose,
+	} = useDisclosure();
+	// the outbound the Mullvad window opens on; undefined for a new one
+	const [mullvadEditTag, setMullvadEditTag] = useState<string>();
+	const openMullvad = (tag?: string) => {
+		setMullvadEditTag(tag);
+		onMullvadOpen();
+	};
 	const {
 		isOpen: isOutboundSubsOpen,
 		onOpen: onOutboundSubsOpen,
@@ -1955,6 +1979,10 @@ export const CoreSettingsPage: FC = () => {
 
 	const moveOutboundUp = (index: number) => {
 		moveOutbound(index, index - 1);
+	};
+
+	const moveOutboundToTop = (index: number) => {
+		moveOutbound(index, 0);
 	};
 
 	const moveOutboundDown = (index: number) => {
@@ -3375,6 +3403,21 @@ export const CoreSettingsPage: FC = () => {
 		}
 	};
 
+	const handleMullvadSave = (
+		outbound: OutboundJson,
+		replaceIndex: number | null,
+	) => {
+		const previousTag =
+			replaceIndex === null
+				? ""
+				: String(getOutbounds()[replaceIndex]?.tag ?? "");
+		// a renamed outbound keeps its routing rules and balancers
+		if (previousTag && previousTag !== outbound.tag) {
+			renameOutboundReferences(previousTag, String(outbound.tag));
+		}
+		handleNordSave(outbound, replaceIndex);
+	};
+
 	const handleOutboundSave = (outboundJson: unknown, targetIds: string[]) => {
 		const outbound = outboundJson as OutboundJson;
 		const outbounds = getOutbounds();
@@ -3760,6 +3803,7 @@ export const CoreSettingsPage: FC = () => {
 	const routingRuleColumns: DataTableColumn<RoutingRuleDisplayRow>[] = [
 		{
 			id: "rule",
+			sortValue: ({ originalIndex }) => originalIndex,
 			header: t("pages.xray.Routings"),
 			isPrimary: true,
 			priority: "primary",
@@ -3796,6 +3840,7 @@ export const CoreSettingsPage: FC = () => {
 		},
 		{
 			id: "source",
+			sortValue: ({ rule }) => String(rule.source ?? ""),
 			header: t("pages.xray.rules.sourceGroup"),
 			priority: "medium",
 			hideBelow: "xl",
@@ -3809,6 +3854,7 @@ export const CoreSettingsPage: FC = () => {
 		},
 		{
 			id: "network",
+			sortValue: ({ rule }) => String(rule.network ?? ""),
 			header: t("pages.xray.rules.networkGroup"),
 			priority: "high",
 			cell: ({ rule }) => (
@@ -3822,6 +3868,7 @@ export const CoreSettingsPage: FC = () => {
 		},
 		{
 			id: "destination",
+			sortValue: ({ rule }) => String(rule.domain ?? rule.ip ?? ""),
 			header: t("pages.xray.rules.destinationGroup"),
 			priority: "high",
 			minSize: "180px",
@@ -3836,6 +3883,7 @@ export const CoreSettingsPage: FC = () => {
 		},
 		{
 			id: "inbound",
+			sortValue: ({ rule }) => String(rule.inboundTag ?? ""),
 			header: t("inbound"),
 			priority: "medium",
 			hideBelow: "lg",
@@ -3849,6 +3897,7 @@ export const CoreSettingsPage: FC = () => {
 		},
 		{
 			id: "target",
+			sortValue: ({ rule }) => String(rule.outboundTag ?? rule.balancerTag ?? ""),
 			header: t("pages.xray.rules.outbound"),
 			priority: "high",
 			mobileSummary: true,
@@ -3876,6 +3925,14 @@ export const CoreSettingsPage: FC = () => {
 			label: t("pages.xray.routeTester.test"),
 			icon: <BoltIconStyled />,
 			onClick: () => openRouteTest(row.originalIndex),
+		},
+		{
+			id: "move-top",
+			label: t("pages.xray.rules.top"),
+			icon: <ChevronDoubleUpIconStyled />,
+			isDisabled:
+				routingRuleSearch.trim().length > 0 || row.originalIndex === 0,
+			onClick: () => replaceRule(row.originalIndex, 0),
 		},
 		{
 			id: "move-up",
@@ -3906,6 +3963,7 @@ export const CoreSettingsPage: FC = () => {
 	const outboundColumns: DataTableColumn<OutboundDisplayRow>[] = [
 		{
 			id: "tag",
+			sortValue: ({ outbound }) => outbound.tag ?? "",
 			header: t("pages.xray.outbound.tag"),
 			isPrimary: true,
 			priority: "primary",
@@ -3931,6 +3989,7 @@ export const CoreSettingsPage: FC = () => {
 		},
 		{
 			id: "address",
+			sortValue: ({ outbound }) => findOutboundAddress(outbound).join(", "),
 			header: t("pages.xray.outbound.address"),
 			priority: "high",
 			minSize: "190px",
@@ -3939,6 +3998,10 @@ export const CoreSettingsPage: FC = () => {
 		},
 		{
 			id: "traffic",
+			sortValue: ({ outbound, originalIndex }) => {
+				const traffic = findOutboundTraffic(outbound, originalIndex);
+				return (traffic?.up ?? 0) + (traffic?.down ?? 0);
+			},
 			header: t("pages.inbounds.traffic"),
 			priority: "high",
 			mobileSummary: true,
@@ -3947,6 +4010,7 @@ export const CoreSettingsPage: FC = () => {
 		},
 		{
 			id: "latency",
+			sortValue: ({ originalIndex }) => outboundTestStates[originalIndex]?.result?.delay ?? Number.POSITIVE_INFINITY,
 			header: t("pages.xray.outbound.testTypeLatency"),
 			priority: "high",
 			cell: ({ originalIndex }) =>
@@ -3983,6 +4047,31 @@ export const CoreSettingsPage: FC = () => {
 			label: t("edit"),
 			icon: <EditIconStyled />,
 			onClick: () => editOutbound(row.originalIndex),
+		},
+		...(isMullvadOutbound(form.getValues("config.outbounds")?.[row.originalIndex])
+			? [
+					{
+						id: "edit-mullvad",
+						label: t("pages.xray.mullvad.edit"),
+						icon: <MullvadIconStyled />,
+						onClick: () =>
+							openMullvad(
+								String(
+									form.getValues("config.outbounds")?.[row.originalIndex]?.tag ?? "",
+								),
+							),
+					},
+				]
+			: []),
+		{
+			id: "move-top",
+			label: t("pages.xray.outbound.moveToTop"),
+			icon: <ChevronDoubleUpIconStyled />,
+			isDisabled:
+				outboundSearch.trim().length > 0 ||
+				outboundTrafficSort !== "default" ||
+				row.originalIndex === 0,
+			onClick: () => moveOutboundToTop(row.originalIndex),
 		},
 		{
 			id: "move-up",
@@ -4044,6 +4133,7 @@ export const CoreSettingsPage: FC = () => {
 		[
 			{
 				id: "tag",
+				sortValue: ({ outbound }) => outbound.tag ?? "",
 				header: t("pages.xray.outbound.tag"),
 				isPrimary: true,
 				priority: "primary",
@@ -4060,6 +4150,7 @@ export const CoreSettingsPage: FC = () => {
 			},
 			{
 				id: "protocol",
+				sortValue: ({ outbound }) => outbound.protocol ?? "",
 				header: t("protocol"),
 				priority: "high",
 				cell: ({ outbound }) => renderOutboundBadges(outbound),
@@ -4067,6 +4158,7 @@ export const CoreSettingsPage: FC = () => {
 			},
 			{
 				id: "address",
+				sortValue: ({ outbound }) => findOutboundAddress(outbound).join(", "),
 				header: t("pages.xray.outbound.address"),
 				priority: "medium",
 				hideBelow: "lg",
@@ -4076,6 +4168,10 @@ export const CoreSettingsPage: FC = () => {
 			},
 			{
 				id: "traffic",
+				sortValue: ({ outbound }) => {
+					const traffic = findSubscriptionOutboundTraffic(outbound);
+					return (traffic?.up ?? 0) + (traffic?.down ?? 0);
+				},
 				header: t("pages.inbounds.traffic"),
 				priority: "high",
 				mobileSummary: true,
@@ -4084,6 +4180,7 @@ export const CoreSettingsPage: FC = () => {
 			},
 			{
 				id: "latency",
+				sortValue: ({ stateKey }) => subscriptionOutboundTestStates[stateKey]?.result?.delay ?? Number.POSITIVE_INFINITY,
 				header: t("pages.xray.outbound.testTypeLatency"),
 				priority: "high",
 				cell: ({ stateKey }) =>
@@ -4108,6 +4205,7 @@ export const CoreSettingsPage: FC = () => {
 	const reverseColumns: DataTableColumn<ReverseRow>[] = [
 		{
 			id: "type",
+			sortValue: (reverse) => reverse.type ?? "",
 			header: t("pages.xray.reverse.type"),
 			isPrimary: true,
 			priority: "primary",
@@ -4124,6 +4222,7 @@ export const CoreSettingsPage: FC = () => {
 		},
 		{
 			id: "tag",
+			sortValue: (reverse) => reverse.tag ?? "",
 			header: t("pages.xray.reverse.tag"),
 			priority: "high",
 			cell: (reverse) => renderTextValue(reverse.tag),
@@ -4131,12 +4230,14 @@ export const CoreSettingsPage: FC = () => {
 		},
 		{
 			id: "connection",
+			sortValue: (reverse) => reverse.connectionTag ?? "",
 			header: t("pages.xray.reverse.connection"),
 			priority: "high",
 			cell: (reverse) => renderTextValue(reverse.connectionTag),
 		},
 		{
 			id: "target",
+			sortValue: (reverse) => (reverse.type === "internal" ? reverse.targetTag ?? "" : String(reverse.inboundTags ?? "")),
 			header: t("pages.xray.reverse.target"),
 			priority: "medium",
 			hideBelow: "lg",
@@ -4168,6 +4269,7 @@ export const CoreSettingsPage: FC = () => {
 	const balancerColumns: DataTableColumn<BalancerRow>[] = [
 		{
 			id: "tag",
+			sortValue: (balancer) => balancer.tag ?? "",
 			header: t("pages.xray.balancer.tag"),
 			isPrimary: true,
 			priority: "primary",
@@ -4175,6 +4277,7 @@ export const CoreSettingsPage: FC = () => {
 		},
 		{
 			id: "strategy",
+			sortValue: (balancer) => balancer.strategy ?? "",
 			header: t("pages.xray.balancer.balancerStrategy"),
 			priority: "high",
 			mobileSummary: true,
@@ -4195,6 +4298,7 @@ export const CoreSettingsPage: FC = () => {
 		},
 		{
 			id: "selector",
+			sortValue: (balancer) => String(balancer.selector ?? ""),
 			header: t("pages.xray.balancer.balancerSelectors"),
 			priority: "high",
 			cell: (balancer) => renderChipList(balancer.selector, "blue"),
@@ -4226,6 +4330,7 @@ export const CoreSettingsPage: FC = () => {
 	const dnsColumns: DataTableColumn<DnsDisplayRow>[] = [
 		{
 			id: "address",
+			sortValue: ({ dns }) => String(typeof dns === "object" ? dns.address : dns),
 			header: t("pages.xray.outbound.address"),
 			isPrimary: true,
 			priority: "primary",
@@ -4234,6 +4339,7 @@ export const CoreSettingsPage: FC = () => {
 		},
 		{
 			id: "domains",
+			sortValue: ({ dns }) => (typeof dns === "object" ? String(dns.domains ?? "") : ""),
 			header: t("pages.xray.dns.domains"),
 			priority: "high",
 			cell: ({ dns }) =>
@@ -4242,6 +4348,7 @@ export const CoreSettingsPage: FC = () => {
 		},
 		{
 			id: "expectIPs",
+			sortValue: ({ dns }) => (typeof dns === "object" ? String(dns.expectIPs ?? "") : ""),
 			header: t("pages.xray.dns.expectIPs"),
 			priority: "medium",
 			hideBelow: "lg",
@@ -4274,6 +4381,7 @@ export const CoreSettingsPage: FC = () => {
 	const fakeDnsColumns: DataTableColumn<FakeDnsDisplayRow>[] = [
 		{
 			id: "ipPool",
+			sortValue: ({ fake }) => String(fake.ipPool ?? ""),
 			header: t("pages.xray.fakedns.ipPool"),
 			isPrimary: true,
 			priority: "primary",
@@ -4281,6 +4389,7 @@ export const CoreSettingsPage: FC = () => {
 		},
 		{
 			id: "poolSize",
+			sortValue: ({ fake }) => Number(fake.poolSize) || 0,
 			header: t("pages.xray.fakedns.poolSize"),
 			priority: "high",
 			mobileSummary: true,
@@ -5137,6 +5246,12 @@ export const CoreSettingsPage: FC = () => {
 														NordVPN
 													</MenuItem>
 													<MenuItem
+														icon={<MullvadIconStyled />}
+														onClick={() => openMullvad()}
+													>
+														Mullvad
+													</MenuItem>
+													<MenuItem
 														icon={<TorIconStyled />}
 														isDisabled={isApplyingTorProxy}
 														onClick={onTorProxyOpen}
@@ -5951,6 +6066,18 @@ export const CoreSettingsPage: FC = () => {
 						onClose={handleNordModalClose}
 						initialOutbounds={getOutbounds()}
 						onSave={handleNordSave}
+						onDelete={handleNordDelete}
+					/>
+				)}
+				{isMullvadOpen && (
+					<MullvadModal
+						isOpen={isMullvadOpen}
+						onClose={onMullvadClose}
+						initialTag={mullvadEditTag}
+						targetID={selectedTarget}
+						canPing={!isMasterTarget}
+						initialOutbounds={getOutbounds()}
+						onSave={handleMullvadSave}
 						onDelete={handleNordDelete}
 					/>
 				)}

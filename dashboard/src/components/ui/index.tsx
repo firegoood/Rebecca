@@ -19,6 +19,7 @@ export { PageLoadingSkeleton } from "./PageLoadingSkeleton";
 export {
 	ResourceListCard,
 	ResourceRefreshButton,
+	ResourceSummaryPills,
 	type ResourceSummaryItem,
 } from "./ResourceListCard";
 export { RowActionsMenu } from "./DataTableRowActions";

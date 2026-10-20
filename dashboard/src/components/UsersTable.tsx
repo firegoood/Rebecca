@@ -30,6 +30,7 @@ import {
 	ClockIcon,
 	GlobeAltIcon,
 	LinkIcon,
+	LinkSlashIcon,
 	NoSymbolIcon,
 	PencilIcon,
 	PlusCircleIcon,
@@ -181,7 +182,8 @@ const LockOverlayIcon = chakra(LockClosedIcon, {
 	},
 });
 const ResetIcon = chakra(ArrowPathIcon, iconProps);
-const RevokeIcon = chakra(NoSymbolIcon, iconProps);
+const DisableIcon = chakra(NoSymbolIcon, iconProps);
+const RevokeIcon = chakra(LinkSlashIcon, iconProps);
 const TrafficIcon = chakra(PlusCircleIcon, iconProps);
 const ExtendIcon = chakra(ClockIcon, iconProps);
 const UsageHistoryIcon = chakra(ChartBarIcon, iconProps);
@@ -484,7 +486,6 @@ export const UsersTable: FC<UsersTableProps> = ({
 		filters,
 		users: usersResponse,
 		onEditingUser,
-		onFilterChange,
 		loading,
 		isUserLimitReached,
 		deleteUser,
@@ -498,7 +499,6 @@ export const UsersTable: FC<UsersTableProps> = ({
 		filters: useDashboard((state) => state.filters),
 		users: useDashboard((state) => state.users),
 		onEditingUser: useDashboard((state) => state.onEditingUser),
-		onFilterChange: useDashboard((state) => state.onFilterChange),
 		loading: useDashboard((state) => state.loading),
 		isUserLimitReached: useDashboard((state) => state.isUserLimitReached),
 		deleteUser: useDashboard((state) => state.deleteUser),
@@ -635,23 +635,6 @@ export const UsersTable: FC<UsersTableProps> = ({
 		});
 		return summary;
 	}, [usersResponse.status_breakdown, usersResponse.users]);
-
-	const handleSort = (column: string) => {
-		let newSort = filters.sort;
-		if (newSort.includes(column)) {
-			if (newSort.startsWith("-")) {
-				newSort = "-created_at";
-			} else {
-				newSort = `-${column}`;
-			}
-		} else {
-			newSort = column;
-		}
-		onFilterChange({
-			sort: newSort,
-			offset: 0,
-		});
-	};
 
 	const closeContextMenu = useCallback(() => undefined, []);
 
@@ -1203,12 +1186,6 @@ export const UsersTable: FC<UsersTableProps> = ({
 		return [{ id, desc }];
 	}, [filters.sort]);
 
-	const handleUserTableSorting = (nextSorting: SortingState) => {
-		const next = nextSorting[0];
-		if (!next) return;
-		handleSort(next.id);
-	};
-
 	const formatUserLink = (link?: string | null) => {
 		if (!link) return "";
 		return link.startsWith("/") ? window.location.origin + link : link;
@@ -1299,7 +1276,7 @@ export const UsersTable: FC<UsersTableProps> = ({
 			actions.push({
 				id: "disable",
 				label: t("usersTable.disableUser"),
-				icon: <RevokeIcon />,
+				icon: <DisableIcon />,
 				isDisabled: contextAction === "disable",
 				onClick: () => handleDisableUser(user),
 			});
@@ -1659,8 +1636,8 @@ export const UsersTable: FC<UsersTableProps> = ({
 						}
 						renderExpandedRow={isDesktop ? renderExpandedUser : undefined}
 						sorting={userSorting}
-						onSortingChange={handleUserTableSorting}
 						manualSorting
+						showSortMenu={false}
 						dir={isRTL ? "rtl" : "ltr"}
 						selectedLabel={t("usersTable.selectedCount", {
 							count: selectedUsers.length,
@@ -1671,7 +1648,7 @@ export const UsersTable: FC<UsersTableProps> = ({
 									<Button
 										size="sm"
 										variant="outline"
-										leftIcon={<RevokeIcon />}
+										leftIcon={<DisableIcon />}
 										onClick={handleBulkDisable}
 										isLoading={bulkAction === "disable"}
 										isDisabled={
