@@ -1,5 +1,5 @@
 import { Button } from "components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "components/ui/popover";
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "components/ui/popover";
 import { Badge } from "components/ui/badge";
 import { Input } from "components/ui/input";
 import { CircleAlert, CircleCheck, Info, TriangleAlert } from "lucide-react";
@@ -16,7 +16,6 @@ import {
 	type KeyboardEvent,
 	type MouseEvent,
 	type ReactNode,
-	useEffect,
 	useId,
 	useMemo,
 	useRef,
@@ -243,12 +242,6 @@ export const PanelSelect = forwardRef<HTMLInputElement, PanelSelectProps>(
 		const nestedMenuScrollRef = useRef<{ left: number; top: number } | null>(
 			null,
 		);
-		const [multiMenuRect, setMultiMenuRect] = useState<{
-			left: number;
-			top?: number;
-			bottom?: number;
-			width: number;
-		} | null>(null);
 		const normalizedOptions = useMemo(
 			() =>
 				dedupeOptions([
@@ -340,32 +333,6 @@ export const PanelSelect = forwardRef<HTMLInputElement, PanelSelectProps>(
 		const controlHeight = "min-h-9";
 		const disabledState = isDisabled || Boolean(disabled);
 		const resolvedBorderColor = isInvalid ? invalidBorderColor : borderColor;
-
-		useEffect(() => {
-			if (!multiOpen) return;
-			const updateMultiMenuRect = () => {
-				const rect = multiContainerRef.current?.getBoundingClientRect();
-				if (!rect) return;
-				const menuHeight = 240;
-				const gap = 6;
-				const spaceBelow = window.innerHeight - rect.bottom;
-				const opensUp = spaceBelow < menuHeight + gap && rect.top > spaceBelow;
-				setMultiMenuRect({
-					left: rect.left,
-					width: rect.width,
-					...(opensUp
-						? { bottom: window.innerHeight - rect.top + gap }
-						: { top: rect.bottom + gap }),
-				});
-			};
-			updateMultiMenuRect();
-			window.addEventListener("resize", updateMultiMenuRect);
-			window.addEventListener("scroll", updateMultiMenuRect, true);
-			return () => {
-				window.removeEventListener("resize", updateMultiMenuRect);
-				window.removeEventListener("scroll", updateMultiMenuRect, true);
-			};
-		}, [multiOpen]);
 
 		const emitValue = (nextValue: string | string[]) => {
 			onValueChange?.(nextValue);
@@ -577,7 +544,14 @@ export const PanelSelect = forwardRef<HTMLInputElement, PanelSelectProps>(
 						value={selectedValues.join(", ")}
 						readOnly
 					/>
-					{/* biome-ignore lint/a11y/noStaticElementInteractions: stops mousedown so the field keeps focus while the menu is used */}
+					<Popover open={multiOpen && !disabledState} onOpenChange={(open) => {
+							if (open) return;
+							commitCustomInput();
+							setMultiOpen(false);
+							emitBlur();
+						}}>
+						<PopoverAnchor asChild>
+						{/* biome-ignore lint/a11y/noStaticElementInteractions: stops mousedown so the field keeps focus while the menu is used */}
 					<div onMouseDown={(event) => {
 							if (disabledState) return;
 							const target = event.target as HTMLElement | null;
@@ -612,14 +586,13 @@ export const PanelSelect = forwardRef<HTMLInputElement, PanelSelectProps>(
 							</div>
 						)}
 					</div>
-					{multiOpen && !disabledState && multiMenuRect && (
-						<>
-							{/* biome-ignore lint/a11y/noStaticElementInteractions: menu surface: stops mousedown so the field keeps focus; the options carry the interaction */}
-							<div dir={direction} style={{ left: `${multiMenuRect.left}px`, top: multiMenuRect.top === undefined ? undefined : `${multiMenuRect.top}px`, bottom: multiMenuRect.bottom === undefined ? undefined : `${multiMenuRect.bottom}px`, width: `${multiMenuRect.width}px` }} onMouseDown={(event) => event.preventDefault()} className={cn("[scrollbar-width:none] [ms-overflow-style:none] [&::-webkit-scrollbar]:hidden", cn("pointer-events-auto fixed z-[16060] border rounded-md shadow-xl max-h-[240px] overflow-y-auto p-1", menuBg))}>
-								{optionList}
-							</div>
-						</>
-					)}
+					</PopoverAnchor>
+						<PopoverContent align="start" onOpenAutoFocus={(event) => event.preventDefault()} onInteractOutside={(event) => {
+								if (multiContainerRef.current?.contains(event.target as Node)) event.preventDefault();
+							}} onMouseDown={(event) => event.preventDefault()} className={cn("w-[var(--radix-popper-anchor-width)] max-h-[240px] overflow-y-auto p-1 rounded-md border shadow-xl z-[16050] [scrollbar-width:none] [ms-overflow-style:none] [&::-webkit-scrollbar]:hidden", borderColor, menuBg)}>
+							{optionList}
+						</PopoverContent>
+						</Popover>
 				</div>
 			);
 		}
