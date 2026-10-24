@@ -390,6 +390,17 @@ export const PanelSelect = forwardRef<HTMLInputElement, PanelSelectProps>(
 			);
 		};
 
+		const editValue = (item: string) => {
+			if (disabledState) return;
+			updateMultipleValues(
+				selectedValues.filter((value) => value.toLowerCase() !== item.toLowerCase()),
+			);
+			setCustomInput(item);
+			setSearch(item);
+			setMultiOpen(true);
+			multiContainerRef.current?.querySelector<HTMLInputElement>("input:not([type='hidden'])")?.focus();
+		};
+
 		const commitCustomInput = (rawValue = customInput) => {
 			if (!allowCustom) return;
 			const tokens = splitPanelSelectText(rawValue);
@@ -564,14 +575,17 @@ export const PanelSelect = forwardRef<HTMLInputElement, PanelSelectProps>(
 						<div className="flex flex-wrap gap-1.5 items-center">
 							{selectedValues.map((item) => (
 								<div key={item}>
-									<Badge className={cn("min-h-[22px] rounded-full", tagBg, tagColor)}>
-										
-											{renderLabel(
-												optionByValue.get(item.toLowerCase())?.label ?? item,
-											)}
-										
-										
-									</Badge>
+									{allowCustom && !disabledState ? (
+										<Badge asChild className={cn("min-h-[22px] rounded-full cursor-pointer", tagBg, tagColor)}>
+											<button type="button" onClick={() => editValue(item)}>
+												{renderLabel(optionByValue.get(item.toLowerCase())?.label ?? item)}
+											</button>
+										</Badge>
+									) : (
+										<Badge className={cn("min-h-[22px] rounded-full", tagBg, tagColor)}>
+											{renderLabel(optionByValue.get(item.toLowerCase())?.label ?? item)}
+										</Badge>
+									)}
 								</div>
 							))}
 							<div className="flex-1 min-w-[140px]!">

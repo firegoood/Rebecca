@@ -906,6 +906,16 @@ export function DataTable<TData>({
 															<DataTableCell row={row} column={summary} />
 														</div>
 													)}
+													{hasActions && (
+														<div className="shrink-0 rb-mobile-actions">
+															{resolvedRowActions.length > 0 ? (
+																<RowActionsMenu
+																	actions={resolvedRowActions}
+																	label={actionsLabel}
+																/>
+															) : null}
+														</div>
+													)}
 												</div>
 											</div>
 										</div>
