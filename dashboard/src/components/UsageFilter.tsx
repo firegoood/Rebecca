@@ -151,7 +151,21 @@ export function createUsageConfig(
 					const current = series[seriesIndex];
 					const value = typeof current === "number" ? current : 0;
 					const readable = formatBytes(value, 1);
-					const total = Math.max(value, 1);
+					const seriesList: any[] = Array.isArray(series)
+						? series
+						: Array.isArray((w as any)?.config?.series)
+							? (w as any).config.series
+							: [];
+					const sum = seriesList.reduce((acc: number, curr: any) => {
+						const val =
+							typeof curr === "number"
+								? curr
+								: Array.isArray(curr)
+									? Number(curr[0])
+									: 0;
+						return acc + (Number(val) || 0);
+					}, 0);
+					const total = Math.max(sum, 1);
 					const percent = `${Math.round((value / total) * 1000) / 10}%`;
 					return `
             <div style="
