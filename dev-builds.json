@@ -1,9 +1,29 @@
 {
   "schema_version": 1,
   "project": "Rebecca",
-  "latest": "dev-29138cb",
-  "updated_at": "2026-10-26T21:31:04Z",
+  "latest": "dev-8864146",
+  "updated_at": "2026-10-26T21:34:19Z",
   "builds": [
+    {
+      "tag": "dev-8864146",
+      "sha": "88641468b9bf884271b8b5eabebd2f4995f741ba",
+      "branch": "dev",
+      "workflow": "Binary Build",
+      "run_id": "40405045176",
+      "run_number": "1023",
+      "created_at": "2026-10-26T21:34:19Z",
+      "release_tag": "dev-builds",
+      "assets": {
+        "windows-amd64": {
+          "name": "rebecca-windows-amd64-dev-8864146.zip",
+          "url": "https://github.com/rebeccapanel/Rebecca/releases/download/dev-builds/rebecca-windows-amd64-dev-8864146.zip"
+        },
+        "linux-amd64": {
+          "name": "rebecca-linux-amd64-dev-8864146.tar.gz",
+          "url": "https://github.com/rebeccapanel/Rebecca/releases/download/dev-builds/rebecca-linux-amd64-dev-8864146.tar.gz"
+        }
+      }
+    },
     {
       "tag": "dev-29138cb",
       "sha": "29138cbce7fc38eb4b42a346a1c1abb0e8f33631",
@@ -981,26 +1001,6 @@
         "linux-amd64": {
           "name": "rebecca-linux-amd64-dev-791e8d3.tar.gz",
           "url": "https://github.com/rebeccapanel/Rebecca/releases/download/dev-builds/rebecca-linux-amd64-dev-791e8d3.tar.gz"
-        }
-      }
-    },
-    {
-      "tag": "dev-429a4a7",
-      "sha": "429a4a7ed325391d68532aabd30da4d2f1db051c",
-      "branch": "dev",
-      "workflow": "Binary Build",
-      "run_id": "38378534907",
-      "run_number": "940",
-      "created_at": "2026-10-13T09:48:54Z",
-      "release_tag": "dev-builds",
-      "assets": {
-        "windows-amd64": {
-          "name": "rebecca-windows-amd64-dev-429a4a7.zip",
-          "url": "https://github.com/rebeccapanel/Rebecca/releases/download/dev-builds/rebecca-windows-amd64-dev-429a4a7.zip"
-        },
-        "linux-amd64": {
-          "name": "rebecca-linux-amd64-dev-429a4a7.tar.gz",
-          "url": "https://github.com/rebeccapanel/Rebecca/releases/download/dev-builds/rebecca-linux-amd64-dev-429a4a7.tar.gz"
         }
       }
     }
