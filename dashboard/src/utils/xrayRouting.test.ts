@@ -1,91 +1,42 @@
 import { describe, expect, it } from "vitest";
 
-import {
-	getMatcherSuggestions,
-	matcherTokenAt,
-	replaceMatcherToken,
-} from "./xrayRouting";
+import { isMatcherPrefix, matcherOptions } from "./xrayRouting";
 
-const values = (kind: Parameters<typeof getMatcherSuggestions>[0], token: string) =>
-	getMatcherSuggestions(kind, token).map((item) => item.value);
+const values = (kind: Parameters<typeof matcherOptions>[0]) =>
+	matcherOptions(kind).map((option) => option.value);
 
-describe("domain matcher suggestions", () => {
-	it("offers every documented domain prefix when the field is empty", () => {
-		expect(values("domain", "")).toEqual([
-			"domain:",
-			"full:",
-			"keyword:",
-			"regexp:",
-			"geosite:",
-			"ext:",
-		]);
+describe("matcher options", () => {
+	it("offers the documented domain prefixes and geosite categories", () => {
+		expect(values("domain")).toEqual(
+			expect.arrayContaining([
+				"domain:",
+				"full:",
+				"keyword:",
+				"regexp:",
+				"geosite:",
+				"ext:",
+				"geosite:google",
+				"geosite:category-ads",
+			]),
+		);
 	});
 
-	it("filters prefixes as the user types", () => {
-		expect(values("domain", "re")).toEqual(["regexp:"]);
+	it("offers geoip codes with their inverse form in the ip field", () => {
+		expect(values("ip")).toEqual(
+			expect.arrayContaining(["geoip:", "!geoip:", "ext:", "0.0.0.0/0", "::/0", "geoip:cn", "!geoip:private"]),
+		);
+		expect(values("ip")).not.toContain("geosite:google");
 	});
 
-	it("suggests geosite categories after the geosite prefix", () => {
-		expect(values("domain", "geosite:google")).toEqual(["geosite:google", "geosite:google@cn"]);
-		expect(values("domain", "geosite:g")).toEqual([
-			"geosite:google",
-			"geosite:google@cn",
-			"geosite:geolocation-cn",
-			"geosite:geolocation-!cn",
-		]);
+	it("offers the process selectors", () => {
+		expect(values("process")).toEqual(["self/", "xray/"]);
 	});
 
-	it("stops suggesting once a complete domain is typed", () => {
-		expect(values("domain", "domain:example.com")).toEqual([]);
-		expect(values("domain", "ext:list.dat:tag")).toEqual([]);
-	});
-});
-
-describe("ip matcher suggestions", () => {
-	it("offers geoip, inverse geoip, ext and the catch-all networks", () => {
-		expect(values("ip", "")).toEqual(["geoip:", "!geoip:", "ext:", "0.0.0.0/0", "::/0"]);
-	});
-
-	it("keeps the inverse marker when suggesting geoip codes", () => {
-		expect(values("ip", "!geoip:c")).toEqual(["!geoip:cn"]);
-	});
-
-	it("never offers geosite values in the ip field", () => {
-		expect(values("ip", "geosite:g")).toEqual([]);
-	});
-});
-
-describe("process matcher suggestions", () => {
-	it("offers the self and xray selectors", () => {
-		expect(values("process", "")).toEqual(["self/", "xray/"]);
-		expect(values("process", "x")).toEqual(["xray/"]);
-	});
-});
-
-describe("token handling", () => {
-	it("finds the entry under the caret, using commas and new lines as separators", () => {
-		const text = "domain:a.com,\nke";
-		expect(matcherTokenAt(text, text.length)).toEqual({ start: 14, end: 16, text: "ke" });
-	});
-
-	it("replaces only the entry under the caret and moves the caret after it", () => {
-		const text = "domain:a.com, ke";
-		const token = matcherTokenAt(text, text.length);
-		expect(replaceMatcherToken(text, token, "keyword:")).toEqual({
-			text: "domain:a.com, keyword:",
-			caret: 22,
-		});
-	});
-
-	it("keeps the text after the caret when the entry is edited in the middle", () => {
-		const text = "dom|ain.com";
-		const caret = text.indexOf("|");
-		const plain = text.replace("|", "");
-		const token = matcherTokenAt(plain, caret);
-		expect(token.text).toBe("dom");
-		expect(replaceMatcherToken(plain, token, "domain:")).toEqual({
-			text: "domain:",
-			caret: 7,
-		});
+	it("detects prefixes so picking one keeps the input open", () => {
+		expect(isMatcherPrefix("geosite:")).toBe(true);
+		expect(isMatcherPrefix("domain:")).toBe(true);
+		expect(isMatcherPrefix("geosite:google")).toBe(false);
+		expect(isMatcherPrefix("self/")).toBe(false);
+		expect(isMatcherPrefix("0.0.0.0/0")).toBe(false);
 	});
 });

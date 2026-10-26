@@ -319,7 +319,7 @@ export const DashboardMaintenanceControls = ({
 					</div>
 				</Button>
 			</PopoverTrigger>
-			<PopoverContent onClick={(e) => e.stopPropagation()} className="w-[min(480px,_calc(100vw_-_24px))] max-w-[480px] rounded-2xl shadow-[0_24px_60px_rgba(0,0,0,0.5)] bg-panel-surface border-panel-border! border p-1">
+			<PopoverContent onClick={(e) => e.stopPropagation()} collisionPadding={12} className="w-[min(480px,_calc(100vw_-_24px))] max-w-[480px] max-h-[var(--radix-popover-content-available-height)] overflow-y-auto overscroll-contain rounded-2xl shadow-[0_24px_60px_rgba(0,0,0,0.5)] bg-panel-surface border-panel-border! border p-1">
 				<div className={cn("p-3 font-semibold", "font-bold text-[13px] py-3 px-4 border-panel-border!")}>
 					<div className="flex justify-between items-center gap-3">
 						<p className="text-[13px] font-bold text-panel-text">{t("dashboard.maintenance.title")}</p>
