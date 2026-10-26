@@ -1,17 +1,11 @@
 export type MatcherKind = "domain" | "ip" | "process";
 
-export type MatcherSuggestion = {
+export type MatcherOption = {
 	value: string;
 	hint: string;
 };
 
-export type MatcherToken = {
-	start: number;
-	end: number;
-	text: string;
-};
-
-export const GEOSITE_CATEGORIES: MatcherSuggestion[] = [
+const GEOSITE_CATEGORIES: MatcherOption[] = [
 	{ value: "category-ads", hint: "common advertising domains" },
 	{ value: "category-ads-all", hint: "advertising domains and their trackers" },
 	{ value: "category-ai-!cn", hint: "AI services outside mainland China" },
@@ -30,12 +24,12 @@ export const GEOSITE_CATEGORIES: MatcherSuggestion[] = [
 	{ value: "tld-!cn", hint: "top-level domains not used in mainland China" },
 ];
 
-export const GEOIP_CODES: MatcherSuggestion[] = [
+const GEOIP_CODES: MatcherOption[] = [
 	{ value: "cn", hint: "IPs of mainland China" },
 	{ value: "private", hint: "private and loopback addresses" },
 ];
 
-const DOMAIN_PREFIXES: MatcherSuggestion[] = [
+const DOMAIN_PREFIXES: MatcherOption[] = [
 	{ value: "domain:", hint: "the domain and its subdomains" },
 	{ value: "full:", hint: "exactly this domain" },
 	{ value: "keyword:", hint: "any domain containing this text" },
@@ -44,7 +38,7 @@ const DOMAIN_PREFIXES: MatcherSuggestion[] = [
 	{ value: "ext:", hint: "load from file, ext:file:tag" },
 ];
 
-const IP_PREFIXES: MatcherSuggestion[] = [
+const IP_PREFIXES: MatcherOption[] = [
 	{ value: "geoip:", hint: "predefined IP list" },
 	{ value: "!geoip:", hint: "everything outside a predefined IP list" },
 	{ value: "ext:", hint: "load from file, ext:file:tag" },
@@ -52,62 +46,35 @@ const IP_PREFIXES: MatcherSuggestion[] = [
 	{ value: "::/0", hint: "all IPv6 addresses" },
 ];
 
-const PROCESS_PREFIXES: MatcherSuggestion[] = [
+const PROCESS_MATCHERS: MatcherOption[] = [
 	{ value: "self/", hint: "the Xray process itself, avoids routing loops" },
 	{ value: "xray/", hint: "every process started from this Xray binary" },
 ];
 
-const GEO_PREFIX = /^(!?)(geosite|geoip):(.*)$/i;
+const MATCHER_PREFIXES = new Set([
+	"domain:",
+	"full:",
+	"keyword:",
+	"regexp:",
+	"geosite:",
+	"ext:",
+	"geoip:",
+	"!geoip:",
+]);
 
-const matchesText = (value: string, text: string) =>
-	value.toLowerCase().startsWith(text.toLowerCase());
+export const isMatcherPrefix = (value: string) => MATCHER_PREFIXES.has(value);
 
-const geoValuesFor = (kind: MatcherKind) =>
-	kind === "domain" ? GEOSITE_CATEGORIES : GEOIP_CODES;
+const prefixed = (prefix: string, items: MatcherOption[]): MatcherOption[] =>
+	items.map((item) => ({ value: `${prefix}${item.value}`, hint: item.hint }));
 
-export const getMatcherSuggestions = (
-	kind: MatcherKind,
-	token: string,
-): MatcherSuggestion[] => {
-	const text = token.trim();
-	if (kind === "process") {
-		return PROCESS_PREFIXES.filter((item) => matchesText(item.value, text));
+export const matcherOptions = (kind: MatcherKind): MatcherOption[] => {
+	if (kind === "process") return PROCESS_MATCHERS;
+	if (kind === "domain") {
+		return [...DOMAIN_PREFIXES, ...prefixed("geosite:", GEOSITE_CATEGORIES)];
 	}
-
-	const geo = GEO_PREFIX.exec(text);
-	const scheme = kind === "domain" ? "geosite" : "geoip";
-	if (geo && geo[2].toLowerCase() === scheme && (kind === "ip" || !geo[1])) {
-		const [, inverse, , name] = geo;
-		const namePrefix = name.toLowerCase();
-		return geoValuesFor(kind)
-			.filter((item) => item.value.toLowerCase().startsWith(namePrefix))
-			.map((item) => ({
-				value: `${inverse}${scheme}:${item.value}`,
-				hint: item.hint,
-			}));
-	}
-
-	if (text.toLowerCase().startsWith("ext:")) {
-		return [];
-	}
-
-	const prefixes = kind === "domain" ? DOMAIN_PREFIXES : IP_PREFIXES;
-	return prefixes.filter((item) => matchesText(item.value, text));
+	return [
+		...IP_PREFIXES,
+		...prefixed("geoip:", GEOIP_CODES),
+		...prefixed("!geoip:", GEOIP_CODES),
+	];
 };
-
-export const matcherTokenAt = (text: string, caret: number): MatcherToken => {
-	let start = caret;
-	while (start > 0 && !/[\s,]/.test(text[start - 1])) start -= 1;
-	let end = caret;
-	while (end < text.length && !/[\s,]/.test(text[end])) end += 1;
-	return { start, end, text: text.slice(start, caret) };
-};
-
-export const replaceMatcherToken = (
-	text: string,
-	token: MatcherToken,
-	value: string,
-) => ({
-	text: text.slice(0, token.start) + value + text.slice(token.end),
-	caret: token.start + value.length,
-});

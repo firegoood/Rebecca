@@ -20,7 +20,7 @@ import {
 	SearchableTagSelect,
 	type SearchableTagSelectOption,
 } from "./common/SearchableTagSelect";
-import { MatcherTextarea } from "./xray/MatcherTextarea";
+import { MatcherSelect } from "./xray/MatcherSelect";
 import { OutboundTestButton } from "./xray/OutboundTestButton";
 import { PropagationTargets } from "./xray/PropagationTargets";
 
@@ -565,7 +565,7 @@ export const RuleModal: FC<RuleModalProps> = ({
 													control={control}
 													name="sourceIps"
 													render={({ field }) => (
-														<MatcherTextarea value={field.value ?? ""} kind="ip" onChange={field.onChange} placeholder={t("pages.xray.rules.useComma")} />
+														<MatcherSelect value={field.value ?? ""} kind="ip" onChange={field.onChange} placeholder={t("pages.xray.rules.useComma")} />
 													)}
 												/>
 											</FormField>
@@ -591,7 +591,7 @@ export const RuleModal: FC<RuleModalProps> = ({
 													control={control}
 													name="ip"
 													render={({ field }) => (
-														<MatcherTextarea value={field.value ?? ""} kind="ip" onChange={field.onChange} placeholder="8.8.8.8, geoip:private" />
+														<MatcherSelect value={field.value ?? ""} kind="ip" onChange={field.onChange} placeholder="8.8.8.8, geoip:private" />
 													)}
 												/>
 											</FormField>
@@ -600,7 +600,7 @@ export const RuleModal: FC<RuleModalProps> = ({
 													control={control}
 													name="domain"
 													render={({ field }) => (
-														<MatcherTextarea value={field.value ?? ""} kind="domain" onChange={field.onChange} placeholder="domain:example.com, geosite:category-ads" />
+														<MatcherSelect value={field.value ?? ""} kind="domain" onChange={field.onChange} placeholder="domain:example.com, geosite:category-ads" />
 													)}
 												/>
 											</FormField>
@@ -618,7 +618,7 @@ export const RuleModal: FC<RuleModalProps> = ({
 													control={control}
 													name="localIps"
 													render={({ field }) => (
-														<MatcherTextarea value={field.value ?? ""} kind="ip" onChange={field.onChange} placeholder="127.0.0.1, geoip:private" />
+														<MatcherSelect value={field.value ?? ""} kind="ip" onChange={field.onChange} placeholder="127.0.0.1, geoip:private" />
 													)}
 												/>
 											</FormField>
@@ -650,7 +650,7 @@ export const RuleModal: FC<RuleModalProps> = ({
 													control={control}
 													name="process"
 													render={({ field }) => (
-														<MatcherTextarea value={field.value ?? ""} kind="process" onChange={field.onChange} placeholder="curl, /usr/bin/curl, self/" />
+														<MatcherSelect value={field.value ?? ""} kind="process" onChange={field.onChange} placeholder="curl, /usr/bin/curl, self/" />
 													)}
 												/>
 											</FormField>

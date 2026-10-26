@@ -68,6 +68,9 @@ export type PanelSelectProps = Omit<
 	}) => void;
 	onChange?: (event: ChangeEvent<HTMLSelectElement>) => void;
 	onValueChange?: (value: string | string[]) => void;
+	inputValue?: string;
+	onInputValueChange?: (value: string) => void;
+	interceptOption?: (value: string) => boolean;
 	options?: PanelSelectOption[];
 	placeholder?: string;
 	portalled?: boolean;
@@ -213,6 +216,9 @@ export const PanelSelect = forwardRef<HTMLInputElement, PanelSelectProps>(
 			onBlur,
 			onChange,
 			onValueChange,
+			inputValue,
+			onInputValueChange,
+			interceptOption,
 			options = [],
 			placeholder,
 			portalled = true,
@@ -235,7 +241,12 @@ export const PanelSelect = forwardRef<HTMLInputElement, PanelSelectProps>(
 		const [searchMatch, setSearchMatch] = useState(
 			DEFAULT_SEARCH_MATCH_OPTIONS,
 		);
-		const [customInput, setCustomInput] = useState("");
+		const [customInputDraft, setCustomInputDraft] = useState("");
+		const customInput = inputValue ?? customInputDraft;
+		const setCustomInput = (next: string) => {
+			setCustomInputDraft(next);
+			onInputValueChange?.(next);
+		};
 		const [multiOpen, setMultiOpen] = useState(false);
 		const [singleOpen, setSingleOpen] = useState(false);
 		const multiContainerRef = useRef<HTMLDivElement | null>(null);
@@ -294,16 +305,17 @@ export const PanelSelect = forwardRef<HTMLInputElement, PanelSelectProps>(
 				]),
 			[normalizedOptions, optionByValue, selectedValues],
 		);
+		const filterText = mode === "multiple" ? customInput : search;
 		const filteredOptions = useMemo(() => {
-			if (!search.trim()) return mergedOptions;
+			if (!filterText.trim()) return mergedOptions;
 			return mergedOptions.filter((option) =>
 				matchesSearch(
 					`${option.searchLabel} ${option.value}`,
-					search,
+					filterText,
 					searchMatch,
 				),
 			);
-		}, [mergedOptions, search, searchMatch]);
+		}, [mergedOptions, filterText, searchMatch]);
 		const searchable = showSearch ?? mergedOptions.length > 10;
 		const coarsePointer = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
 		const customTerm = customInput.trim();
@@ -364,6 +376,7 @@ export const PanelSelect = forwardRef<HTMLInputElement, PanelSelectProps>(
 
 		const toggleValue = (option: NormalizedOption) => {
 			if (option.disabled) return;
+			if (mode === "multiple" && interceptOption?.(option.value)) return;
 			if (mode === "single") {
 				emitValue(option.value);
 				emitBlur();
