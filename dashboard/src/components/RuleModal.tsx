@@ -13,6 +13,8 @@ import { Route, Plus, X } from "lucide-react";
 import { type FC, useEffect, useMemo, useState } from "react";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
+import { isPlainObject } from "utils/jsonFormatting";
+import { JsonEditor } from "./JsonEditor";
 import { MultiValueAutocomplete } from "./common/MultiValueAutocomplete";
 import {
 	SearchableTagSelect,
@@ -225,6 +227,8 @@ export const RuleModal: FC<RuleModalProps> = ({
 	const { t } = useTranslation();
 	const [targetIds, setTargetIds] = useState<string[]>([]);
 	const [tab, setTab] = useState("form");
+	const [jsonData, setJsonData] = useState<RoutingRule>({});
+	const [jsonError, setJsonError] = useState<string | null>(null);
 
 	const {
 		control,
@@ -232,6 +236,7 @@ export const RuleModal: FC<RuleModalProps> = ({
 		handleSubmit,
 		reset,
 		setValue,
+		getValues,
 		formState: { isSubmitting },
 	} = useForm<RuleFormValues>({
 		defaultValues: defaultFormValues,
@@ -247,6 +252,7 @@ export const RuleModal: FC<RuleModalProps> = ({
 			reset(ruleToFormValues(initialRule));
 			setTargetIds([]);
 			setTab("form");
+			setJsonError(null);
 		}
 	}, [isOpen, initialRule, reset]);
 
@@ -256,7 +262,28 @@ export const RuleModal: FC<RuleModalProps> = ({
 		onClose();
 	};
 
+	const handleTabChange = (next: string) => {
+		setTab(next);
+		if (next === "json") {
+			setJsonData(formValuesToRule(getValues()));
+			setJsonError(null);
+		}
+	};
+
+	const handleJsonChange = (value: string) => {
+		try {
+			const parsed: unknown = JSON.parse(value);
+			if (!isPlainObject(parsed)) throw new SyntaxError(t("jsonEditor.invalid"));
+			setJsonError(null);
+			setJsonData(parsed as RoutingRule);
+			reset(ruleToFormValues(parsed as RoutingRule));
+		} catch (error) {
+			setJsonError(error instanceof Error ? error.message : t("jsonEditor.invalid"));
+		}
+	};
+
 	const handleSave = handleSubmit((values) => {
+		if (tab === "json" && jsonError) return;
 		const rule = formValuesToRule(values);
 		onSubmit(rule, targetIds);
 		handleClose();
@@ -281,10 +308,11 @@ export const RuleModal: FC<RuleModalProps> = ({
 						</div>
 					</DialogHeader>
 
-					<Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
+					<Tabs value={tab} onValueChange={handleTabChange} className="flex min-h-0 flex-1 flex-col">
 						<div className="border-b px-5 pt-2.5 pb-2.5">
 							<TabsList className="w-full">
 								<TabsTrigger value="form">{t("form")}</TabsTrigger>
+								<TabsTrigger value="json">{t("json")}</TabsTrigger>
 								<TabsTrigger value="propagate">{t("pages.xray.propagate.tab")}</TabsTrigger>
 							</TabsList>
 						</div>
@@ -542,7 +570,15 @@ export const RuleModal: FC<RuleModalProps> = ({
 									</FormSection>
 								</div>
 							</TabsContent>
-							<TabsContent value="propagate" className="mt-0">
+							<TabsContent value="json" className="mt-0">
+							<div className="flex flex-col gap-4">
+								<div className="h-[420px] overflow-hidden rounded-lg border">
+									<JsonEditor json={jsonData} canonicalContext="routingRule" onChange={handleJsonChange} />
+								</div>
+								{jsonError ? <p className="text-sm text-destructive">{jsonError}</p> : null}
+							</div>
+						</TabsContent>
+						<TabsContent value="propagate" className="mt-0">
 								<PropagationTargets
 									source={sourceTarget}
 									section="routing.rules"

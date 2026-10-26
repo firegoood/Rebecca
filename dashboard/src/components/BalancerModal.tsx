@@ -9,6 +9,8 @@ import { TriangleAlert } from "lucide-react";
 import { type FC, useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
+import { isPlainObject } from "utils/jsonFormatting";
+import { JsonEditor } from "./JsonEditor";
 import {
 	MultiValueAutocomplete,
 	splitMultiValueText,
@@ -56,6 +58,20 @@ const DEFAULT_BALANCER: BalancerFormValues = {
 };
 
 const uniq = (values: string[]) => Array.from(new Set(values));
+
+const balancerToJson = (values: BalancerFormValues) => ({
+	tag: values.tag.trim(),
+	selector: values.selector.map((item) => item.trim()).filter(Boolean),
+	fallbackTag: values.fallbackTag ?? "",
+	...(values.strategy && values.strategy !== "random" ? { strategy: { type: values.strategy } } : {}),
+});
+
+const balancerFromJson = (json: Record<string, any>): BalancerFormValues => ({
+	tag: String(json.tag ?? ""),
+	strategy: typeof json.strategy === "string" ? json.strategy : (json.strategy?.type ?? "random"),
+	selector: Array.isArray(json.selector) ? json.selector.map(String) : [],
+	fallbackTag: String(json.fallbackTag ?? ""),
+});
 const normalizeBalancerOutboundTag = (tag: string) => tag.trim().toLowerCase();
 
 export const BalancerModal: FC<BalancerModalProps> = ({
@@ -75,6 +91,9 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 }) => {
 	const { t } = useTranslation();
 	const [targetIds, setTargetIds] = useState<string[]>([]);
+	const [tab, setTab] = useState("form");
+	const [jsonData, setJsonData] = useState<Record<string, unknown>>({});
+	const [jsonError, setJsonError] = useState<string | null>(null);
 
 	const modalForm = useForm<BalancerFormValues>({
 		defaultValues: DEFAULT_BALANCER,
@@ -130,6 +149,8 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 	useEffect(() => {
 		if (!isOpen) return;
 		setTargetIds([]);
+		setTab("form");
+		setJsonError(null);
 		modalForm.reset(
 			initialBalancer
 				? {
@@ -149,8 +170,28 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 		);
 	}, [initialBalancer, isOpen, modalForm, isExcludedBalancerOutbound]);
 
+	const handleTabChange = (next: string) => {
+		setTab(next);
+		if (next === "json") {
+			setJsonData(balancerToJson(modalForm.getValues()));
+			setJsonError(null);
+		}
+	};
+
+	const handleJsonChange = (value: string) => {
+		try {
+			const parsed: unknown = JSON.parse(value);
+			if (!isPlainObject(parsed)) throw new SyntaxError(t("jsonEditor.invalid"));
+			setJsonError(null);
+			setJsonData(parsed);
+			modalForm.reset(balancerFromJson(parsed));
+		} catch (error) {
+			setJsonError(error instanceof Error ? error.message : t("jsonEditor.invalid"));
+		}
+	};
+
 	const onSubmitInternal = modalForm.handleSubmit((data) => {
-		if (!isValid) return;
+		if (!isValid || (tab === "json" && jsonError)) return;
 		const payload: BalancerFormValues = {
 			tag: data.tag.trim(),
 			strategy: data.strategy,
@@ -183,9 +224,10 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 				
 				<form onSubmit={onSubmitInternal}>
 					<XrayModalBody>
-						<Tabs defaultValue="form">
+						<Tabs value={tab} onValueChange={handleTabChange}>
 							<TabsList>
 								<TabsTrigger value="form">{t("form")}</TabsTrigger>
+								<TabsTrigger value="json">{t("json")}</TabsTrigger>
 								<TabsTrigger value="propagate">{t("pages.xray.propagate.tab")}</TabsTrigger>
 							</TabsList>
 							
@@ -301,6 +343,14 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 										</XrayDialogSection>
 									</div>
 								</TabsContent>
+								<TabsContent value="json" className="px-0">
+								<div className="flex flex-col gap-4">
+									<div className="h-[420px] overflow-hidden rounded-lg border">
+										<JsonEditor json={jsonData} onChange={handleJsonChange} />
+									</div>
+									{jsonError ? <p className="text-sm text-destructive">{jsonError}</p> : null}
+								</div>
+							</TabsContent>
 								<TabsContent value="propagate" className="px-0">
 									<PropagationTargets
 										source={sourceTarget}

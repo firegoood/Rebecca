@@ -1,3 +1,4 @@
+import { AppleEmojiText } from "components/common/AppleEmojiText";
 import { Button } from "components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "components/ui/dropdown-menu";
@@ -279,7 +280,7 @@ const DataTableCellContent = <TData,>({
 <TooltipTrigger asChild><span className="inline-flex max-w-full">{content}</span></TooltipTrigger>
 <TooltipContent>{
 				<div dir="auto" className="max-w-[360px] max-h-[180px] overflow-y-auto whitespace-pre-wrap [word-break:break-word]">
-					{fullText}
+					<AppleEmojiText>{fullText}</AppleEmojiText>
 				</div>
 			}</TooltipContent>
 </Tooltip>

@@ -1,3 +1,4 @@
+import { AppleEmojiText } from "components/common/AppleEmojiText";
 import { Button } from "components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "components/ui/tooltip";
 import { Collapsible, CollapsibleContent } from "components/ui/collapsible";
@@ -338,7 +339,7 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 								{isAddMode ? t("nodes.addNewRebeccaNode") : t("nodes.editNode")}
 							</DialogTitle>
 							{!isAddMode && node?.name ? (
-								<DialogDescription className="truncate">{node.name}</DialogDescription>
+								<DialogDescription className="truncate"><AppleEmojiText>{node.name}</AppleEmojiText></DialogDescription>
 							) : null}
 						</div>
 					</DialogHeader>

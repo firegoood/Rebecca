@@ -3066,6 +3066,10 @@ export const CoreSettingsPage: FC = () => {
 		handleNordSave(outbound, replaceIndex);
 	};
 
+	const handleMullvadSaveMany = (outbounds: OutboundJson[]) => {
+		commitOutbounds([...getOutbounds(), ...outbounds]);
+	};
+
 	const handleOutboundSave = (outboundJson: unknown, targetIds: string[]) => {
 		const outbound = outboundJson as OutboundJson;
 		const outbounds = getOutbounds();
@@ -5296,6 +5300,7 @@ export const CoreSettingsPage: FC = () => {
 						canPing={!isMasterTarget}
 						initialOutbounds={getOutbounds()}
 						onSave={handleMullvadSave}
+						onSaveMany={handleMullvadSaveMany}
 						onDelete={handleNordDelete}
 					/>
 				)}

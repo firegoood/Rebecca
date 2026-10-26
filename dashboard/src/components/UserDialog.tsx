@@ -569,7 +569,11 @@ export const UserDialog: FC<UserDialogProps> = () => {
 					const series: number[] = [];
 					const labels: string[] = [];
 					for (const key in usages) {
-						series.push(usages[key].used_traffic);
+						const usedTraffic = Number(usages[key]?.used_traffic ?? 0);
+						if (!usedTraffic || usedTraffic <= 0) {
+							continue;
+						}
+						series.push(usedTraffic);
 						labels.push(usages[key].node_name);
 					}
 					setUsage(createUsageConfig(colorMode, usageTitle, series, labels));

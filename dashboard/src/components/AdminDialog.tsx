@@ -457,12 +457,12 @@ export const AdminDialog: FC = () => {
 			setAdminExpireDate(null);
 			return;
 		}
-		if (admin) {
-			setAdminExpireDate(typeof admin.expire === "number" && admin.expire > 0 ? dayjs.unix(admin.expire).toDate() : null);
+		if (adminFromStore) {
+			setAdminExpireDate(typeof adminFromStore.expire === "number" && adminFromStore.expire > 0 ? dayjs.unix(adminFromStore.expire).toDate() : null);
 			return;
 		}
 		setAdminExpireDate(null);
-	}, [admin, isOpen]);
+	}, [adminFromStore, isOpen]);
 
 	useEffect(() => {
 		if (!isOpen) return;
@@ -479,24 +479,24 @@ export const AdminDialog: FC = () => {
 			.catch(() => setServiceOptions([]));
 		setServiceSearch("");
 
-		const nextRole: AdminRole = admin?.role ?? AdminRole.Standard;
-		const storedPermissions: AdminPermissions | null = admin?.permissions
-			? JSON.parse(JSON.stringify(admin.permissions))
+		const nextRole: AdminRole = adminFromStore?.role ?? AdminRole.Standard;
+		const storedPermissions: AdminPermissions | null = adminFromStore?.permissions
+			? JSON.parse(JSON.stringify(adminFromStore.permissions))
 			: null;
 		const nextPermissions = storedPermissions?.users ? storedPermissions : clonePermissions(nextRole);
 		reset({
-			username: admin?.username ?? "",
+			username: adminFromStore?.username ?? "",
 			password: "",
-			telegram_id: admin?.telegram_id !== undefined && admin?.telegram_id !== null ? String(admin.telegram_id) : "",
+			telegram_id: adminFromStore?.telegram_id !== undefined && adminFromStore?.telegram_id !== null ? String(adminFromStore.telegram_id) : "",
 			role: nextRole,
-			require_2fa: admin?.require_2fa ?? false,
-			traffic_limit_mode: admin?.traffic_limit_mode ?? AdminTrafficLimitMode.UsedTraffic,
-			use_service_traffic_limits: admin?.use_service_traffic_limits ?? false,
-			show_user_traffic: admin?.show_user_traffic ?? true,
-			delete_user_usage_limit_enabled: admin?.delete_user_usage_limit_enabled ?? false,
+			require_2fa: adminFromStore?.require_2fa ?? false,
+			traffic_limit_mode: adminFromStore?.traffic_limit_mode ?? AdminTrafficLimitMode.UsedTraffic,
+			use_service_traffic_limits: adminFromStore?.use_service_traffic_limits ?? false,
+			show_user_traffic: adminFromStore?.show_user_traffic ?? true,
+			delete_user_usage_limit_enabled: adminFromStore?.delete_user_usage_limit_enabled ?? false,
 			delete_user_usage_limit:
-				admin?.delete_user_usage_limit !== undefined && admin?.delete_user_usage_limit !== null
-					? String(Math.floor(admin.delete_user_usage_limit / MB_IN_BYTES))
+				adminFromStore?.delete_user_usage_limit !== undefined && adminFromStore?.delete_user_usage_limit !== null
+					? String(Math.floor(adminFromStore.delete_user_usage_limit / MB_IN_BYTES))
 					: "",
 			permissions: nextPermissions,
 			maxSpeedLimitPerUserMbps: nextPermissions.users.max_speed_limit_per_user
@@ -507,11 +507,11 @@ export const AdminDialog: FC = () => {
 				: "",
 			maxDataLimitPerUserGb: formatBytesToGbString(nextPermissions.users.max_data_limit_per_user),
 			minDataLimitPerUserGb: formatBytesToGbString(nextPermissions.users.min_data_limit_per_user),
-			data_limit: admin?.data_limit !== undefined && admin?.data_limit !== null ? String(Math.round((admin.data_limit / GB_IN_BYTES) * 1e9) / 1e9) : "",
-			users_limit: admin?.users_limit !== undefined && admin?.users_limit !== null ? String(admin.users_limit) : "",
-			services: admin?.services ?? [],
+			data_limit: adminFromStore?.data_limit !== undefined && adminFromStore?.data_limit !== null ? String(Math.round((adminFromStore.data_limit / GB_IN_BYTES) * 1e9) / 1e9) : "",
+			users_limit: adminFromStore?.users_limit !== undefined && adminFromStore?.users_limit !== null ? String(adminFromStore.users_limit) : "",
+			services: adminFromStore?.services ?? [],
 			service_limits: Object.fromEntries(
-				(admin?.service_limits ?? []).map((item) => [
+				(adminFromStore?.service_limits ?? []).map((item) => [
 					item.service_id,
 					{
 						traffic_limit_mode: item.traffic_limit_mode ?? AdminTrafficLimitMode.UsedTraffic,
@@ -534,7 +534,7 @@ export const AdminDialog: FC = () => {
 				]),
 			),
 		});
-	}, [admin, isOpen, reset]);
+	}, [adminFromStore, isOpen, reset]);
 
 	useEffect(() => {
 		if (watchRole === AdminRole.FullAccess) {

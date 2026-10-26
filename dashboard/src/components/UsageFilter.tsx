@@ -42,16 +42,14 @@ const buildRangeFromKey = (value: string): DateRangeValue => {
 	const unit = parsed?.unit ?? "month";
 	const amount = parsed?.num ?? 1;
 	const alignUnit: ManipulateType = unit === "hour" ? "hour" : "day";
-	const end = dayjs().utc().endOf(alignUnit).toDate();
-	const span = Math.max(amount - 1, 0);
-	const start = dayjs()
-		.utc()
-		.subtract(span, unit as ManipulateType)
-		.startOf(alignUnit)
-		.toDate();
+	const end = dayjs().utc().endOf(alignUnit);
+	const start = end
+		.subtract(amount, unit as ManipulateType)
+		.add(1, alignUnit)
+		.startOf(alignUnit);
 	return {
-		start,
-		end,
+		start: start.toDate(),
+		end: end.toDate(),
 		presetKey: value,
 		key: value,
 		unit: unit === "hour" ? "hour" : "day",
