@@ -733,7 +733,7 @@ const NodesUsageAnalytics: FC = () => {
 						</p>
 					</div>
 				) : nodeUsageChart.series.length ? (
-					<ReactApexChart options={nodeUsageChart.options} series={nodeUsageChart.series} type="donut" className="h-360" />
+					<ReactApexChart options={nodeUsageChart.options} series={nodeUsageChart.series} type="donut" height={360} />
 				) : (
 					<p className="text-center text-gray-500 dark:text-gray-400">
 						{t("noData")}
@@ -801,7 +801,7 @@ const NodesUsageAnalytics: FC = () => {
 						</p>
 					</div>
 				) : nodeDailySeries[0]?.data?.length ? (
-					<ReactApexChart options={nodeDailyChartConfig.options} series={nodeDailyChartConfig.series} type="area" className="h-360" />
+					<ReactApexChart options={nodeDailyChartConfig.options} series={nodeDailyChartConfig.series} type="area" height={360} />
 				) : (
 					<p className="text-center text-gray-500 dark:text-gray-400">
 						{t("noData")}
@@ -880,7 +880,7 @@ const NodesUsageAnalytics: FC = () => {
 						</p>
 					</div>
 				) : adminDailySeries[0]?.data?.length ? (
-					<ReactApexChart options={adminDailyChartConfig.options} series={adminDailyChartConfig.series} type="area" className="h-360" />
+					<ReactApexChart options={adminDailyChartConfig.options} series={adminDailyChartConfig.series} type="area" height={360} />
 				) : (
 					<p className="text-center text-gray-500 dark:text-gray-400">
 						{t("noData")}
@@ -940,7 +940,7 @@ const NodesUsageAnalytics: FC = () => {
 						</p>
 					</div>
 				) : adminDonutChart.series.length ? (
-					<ReactApexChart options={adminDonutChart.options} series={adminDonutChart.series} type="donut" className="h-360" />
+					<ReactApexChart options={adminDonutChart.options} series={adminDonutChart.series} type="donut" height={360} />
 				) : (
 					<p className="text-center text-gray-500 dark:text-gray-400">
 						{t("noData")}
