@@ -20,6 +20,7 @@ import {
 	SearchableTagSelect,
 	type SearchableTagSelectOption,
 } from "./common/SearchableTagSelect";
+import { MatcherTextarea } from "./xray/MatcherTextarea";
 import { OutboundTestButton } from "./xray/OutboundTestButton";
 import { PropagationTargets } from "./xray/PropagationTargets";
 
@@ -44,6 +45,14 @@ type RuleFormValues = {
 	user: string;
 	port: string;
 	attrs: AttributePair[];
+	localIps: string;
+	localPort: string;
+	process: string;
+	vlessRoute: string;
+	ruleTag: string;
+	webhookUrl: string;
+	webhookDeduplication: string;
+	webhookHeaders: AttributePair[];
 };
 
 export type RoutingRule = {
@@ -62,6 +71,16 @@ export type RoutingRule = {
 	user?: string[];
 	port?: string;
 	attrs?: Record<string, string>;
+	localIP?: string[];
+	localPort?: string;
+	process?: string[];
+	vlessRoute?: string;
+	ruleTag?: string;
+	webhook?: {
+		url?: string;
+		deduplication?: number;
+		headers?: Record<string, string>;
+	};
 };
 
 export interface RuleModalProps {
@@ -79,7 +98,7 @@ export interface RuleModalProps {
 	onClose: () => void;
 }
 
-const NETWORK_OPTIONS = ["tcp", "udp", "http", "quic", "grpc"];
+const NETWORK_OPTIONS = ["tcp", "udp"];
 const PROTOCOL_OPTIONS = ["http", "tls", "bittorrent", "quic"];
 const TYPE_OPTIONS = ["field", "chained"];
 const DOMAIN_MATCHER_OPTIONS = ["", "hybrid", "linear"];
@@ -100,6 +119,14 @@ const defaultFormValues: RuleFormValues = {
 	user: "",
 	port: "",
 	attrs: [],
+	localIps: "",
+	localPort: "",
+	process: "",
+	vlessRoute: "",
+	ruleTag: "",
+	webhookUrl: "",
+	webhookDeduplication: "",
+	webhookHeaders: [],
 };
 
 const toDelimitedString = (value?: string | string[]) => {
@@ -126,7 +153,7 @@ const toSingleTag = (value: unknown) => {
 	return value == null ? "" : String(value).trim();
 };
 
-const ruleToFormValues = (rule?: RoutingRule | null): RuleFormValues => {
+export const ruleToFormValues = (rule?: RoutingRule | null): RuleFormValues => {
 	if (!rule) {
 		return { ...defaultFormValues };
 	}
@@ -155,10 +182,22 @@ const ruleToFormValues = (rule?: RoutingRule | null): RuleFormValues => {
 		user: toDelimitedString(rule.user),
 		port: toDelimitedString(rule.port),
 		attrs,
+		localIps: toDelimitedString(rule.localIP),
+		localPort: rule.localPort ?? "",
+		process: toDelimitedString(rule.process),
+		vlessRoute: rule.vlessRoute ?? "",
+		ruleTag: rule.ruleTag ?? "",
+		webhookUrl: rule.webhook?.url ?? "",
+		webhookDeduplication:
+			rule.webhook?.deduplication == null ? "" : String(rule.webhook.deduplication),
+		webhookHeaders: Object.entries(rule.webhook?.headers ?? {}).map(([key, value]) => ({
+			key,
+			value: String(value),
+		})),
 	};
 };
 
-const formValuesToRule = (values: RuleFormValues): RoutingRule => {
+export const formValuesToRule = (values: RuleFormValues): RoutingRule => {
 	const rule: RoutingRule = {};
 
 	if (values.type) rule.type = values.type;
@@ -191,6 +230,36 @@ const formValuesToRule = (values: RuleFormValues): RoutingRule => {
 
 	const portValue = values.port.trim();
 	if (portValue) rule.port = portValue;
+
+	const localIP = splitStringList(values.localIps);
+	if (localIP.length) rule.localIP = localIP;
+
+	const localPort = values.localPort.trim();
+	if (localPort) rule.localPort = localPort;
+
+	const processes = splitStringList(values.process);
+	if (processes.length) rule.process = processes;
+
+	const vlessRoute = values.vlessRoute.trim();
+	if (vlessRoute) rule.vlessRoute = vlessRoute;
+
+	const ruleTag = values.ruleTag.trim();
+	if (ruleTag) rule.ruleTag = ruleTag;
+
+	const webhookUrl = values.webhookUrl.trim();
+	if (webhookUrl) {
+		const webhook: NonNullable<RoutingRule["webhook"]> = { url: webhookUrl };
+		const deduplication = Number(values.webhookDeduplication);
+		if (values.webhookDeduplication.trim() && Number.isFinite(deduplication)) {
+			webhook.deduplication = deduplication;
+		}
+		const headers: Record<string, string> = {};
+		values.webhookHeaders.forEach(({ key, value }) => {
+			if (key.trim()) headers[key.trim()] = value;
+		});
+		if (Object.keys(headers).length) webhook.headers = headers;
+		rule.webhook = webhook;
+	}
 
 	if (values.attrs.length) {
 		const attrs: Record<string, string> = {};
@@ -247,6 +316,15 @@ export const RuleModal: FC<RuleModalProps> = ({
 		name: "attrs",
 	});
 
+	const {
+		fields: webhookHeaderFields,
+		append: appendHeader,
+		remove: removeWebhookHeader,
+	} = useFieldArray({
+		control,
+		name: "webhookHeaders",
+	});
+
 	useEffect(() => {
 		if (isOpen) {
 			reset(ruleToFormValues(initialRule));
@@ -257,6 +335,7 @@ export const RuleModal: FC<RuleModalProps> = ({
 	}, [isOpen, initialRule, reset]);
 
 	const onAddAttribute = () => append({ key: "", value: "" });
+	const onAddWebhookHeader = () => appendHeader({ key: "", value: "" });
 
 	const handleClose = () => {
 		onClose();
@@ -486,7 +565,7 @@ export const RuleModal: FC<RuleModalProps> = ({
 													control={control}
 													name="sourceIps"
 													render={({ field }) => (
-														<MultiValueAutocomplete value={field.value ?? ""} onChange={field.onChange} placeholder={t("pages.xray.rules.useComma")} />
+														<MatcherTextarea value={field.value ?? ""} kind="ip" onChange={field.onChange} placeholder={t("pages.xray.rules.useComma")} />
 													)}
 												/>
 											</FormField>
@@ -512,7 +591,7 @@ export const RuleModal: FC<RuleModalProps> = ({
 													control={control}
 													name="ip"
 													render={({ field }) => (
-														<MultiValueAutocomplete value={field.value ?? ""} onChange={field.onChange} placeholder="8.8.8.8, geoip:private" />
+														<MatcherTextarea value={field.value ?? ""} kind="ip" onChange={field.onChange} placeholder="8.8.8.8, geoip:private" />
 													)}
 												/>
 											</FormField>
@@ -521,7 +600,7 @@ export const RuleModal: FC<RuleModalProps> = ({
 													control={control}
 													name="domain"
 													render={({ field }) => (
-														<MultiValueAutocomplete value={field.value ?? ""} onChange={field.onChange} placeholder="domain:example.com, geosite:category-ads" />
+														<MatcherTextarea value={field.value ?? ""} kind="domain" onChange={field.onChange} placeholder="domain:example.com, geosite:category-ads" />
 													)}
 												/>
 											</FormField>
@@ -534,6 +613,24 @@ export const RuleModal: FC<RuleModalProps> = ({
 													)}
 												/>
 											</FormField>
+											<FormField label={t("pages.xray.rules.localIp")}>
+												<Controller
+													control={control}
+													name="localIps"
+													render={({ field }) => (
+														<MatcherTextarea value={field.value ?? ""} kind="ip" onChange={field.onChange} placeholder="127.0.0.1, geoip:private" />
+													)}
+												/>
+											</FormField>
+											<FormField label={t("pages.xray.rules.localPort")}>
+												<Controller
+													control={control}
+													name="localPort"
+													render={({ field }) => (
+														<MultiValueAutocomplete value={field.value ?? ""} onChange={field.onChange} placeholder="80, 443, 1000-2000" />
+													)}
+												/>
+											</FormField>
 											<FormField label={t("pages.xray.rules.port")}>
 												<Controller
 													control={control}
@@ -543,6 +640,54 @@ export const RuleModal: FC<RuleModalProps> = ({
 													)}
 												/>
 											</FormField>
+										</div>
+									</FormSection>
+
+									<FormSection title={t("pages.xray.rules.processGroup")}>
+										<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+											<FormField label={t("pages.xray.rules.process")}>
+												<Controller
+													control={control}
+													name="process"
+													render={({ field }) => (
+														<MatcherTextarea value={field.value ?? ""} kind="process" onChange={field.onChange} placeholder="curl, /usr/bin/curl, self/" />
+													)}
+												/>
+											</FormField>
+											<FormField label={t("pages.xray.rules.vlessRoute")}>
+												<UiInput placeholder="53,443,1000-2000" {...register("vlessRoute")} />
+											</FormField>
+											<FormField label={t("pages.xray.rules.ruleTag")}>
+												<UiInput {...register("ruleTag")} />
+											</FormField>
+										</div>
+									</FormSection>
+
+									<FormSection title={t("pages.xray.rules.webhook")}>
+										<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+											<FormField label={t("pages.xray.rules.webhookUrl")}>
+												<UiInput placeholder="https://example.com/hook, /var/run/hook.sock" {...register("webhookUrl")} />
+											</FormField>
+											<FormField label={t("pages.xray.rules.webhookDeduplication")}>
+												<UiInput type="number" min={0} inputMode="numeric" {...register("webhookDeduplication")} />
+											</FormField>
+										</div>
+										<div className="flex flex-col gap-3">
+											{webhookHeaderFields.map((field, index) => (
+												<div key={field.id} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2">
+													<UiInput placeholder={t("myaccount.apiKeyMasked")} {...register(`webhookHeaders.${index}.key` as const)} />
+													<UiInput placeholder={t("value")} {...register(`webhookHeaders.${index}.value` as const)} />
+													<Button aria-label={t("a11y.removeAttribute")} onClick={() => removeWebhookHeader(index)} variant="ghost" size="sm" className="size-8 p-0">
+														<X className="w-[16px]" />
+													</Button>
+												</div>
+											))}
+											<div>
+												<Button onClick={onAddWebhookHeader} variant="outline" size="sm">
+													<Plus className="w-[16px]" />
+													{t("pages.xray.rules.webhookHeaders")}
+												</Button>
+											</div>
 										</div>
 									</FormSection>
 

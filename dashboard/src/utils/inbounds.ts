@@ -715,11 +715,16 @@ const createDefaultSockopt = (): SockoptFormValues => ({
 
 const parsePort = (value: string): number | string => {
 	if (!value) return 0;
-	const numeric = Number(value);
+	const normalized = value
+		.split(",")
+		.map((part) => part.trim())
+		.filter(Boolean)
+		.join(",");
+	const numeric = Number(normalized);
 	if (!Number.isNaN(numeric) && numeric > 0) {
 		return numeric;
 	}
-	return value.trim();
+	return normalized;
 };
 
 const isValidPortText = (value: string): boolean => {
@@ -728,6 +733,30 @@ const isValidPortText = (value: string): boolean => {
 	const port = Number(cleaned);
 	return Number.isInteger(port) && port >= 1 && port <= 65535;
 };
+
+const MULTI_PORT_PROTOCOLS = new Set([
+	"vmess",
+	"vless",
+	"trojan",
+	"shadowsocks",
+	"hysteria",
+]);
+
+export const supportsMultiplePorts = (protocol: string): boolean =>
+	MULTI_PORT_PROTOCOLS.has(protocol);
+
+const isValidPortList = (value: string): boolean => {
+	const parts = value.split(",").map((part) => part.trim());
+	if (!parts.every((part) => isValidPortText(part))) return false;
+	const ports = parts.map(Number);
+	return new Set(ports).size === ports.length;
+};
+
+export const inboundPortNumbers = (value: string): number[] =>
+	value
+		.split(",")
+		.map((part) => Number(part.trim()))
+		.filter((port) => Number.isInteger(port) && port > 0);
 
 const isHostPortTarget = (value: string): boolean => {
 	const cleaned = value.trim();
@@ -876,7 +905,13 @@ export const validateInboundFormFields = (
 	if (!values.tag?.trim()) {
 		errors.tag = "Inbound tag is required.";
 	}
-	if (!isValidPortText(values.port ?? "")) {
+	const portText = values.port ?? "";
+	if (supportsMultiplePorts(values.protocol)) {
+		if (!isValidPortList(portText)) {
+			errors.port =
+				"Enter one port, or several separated by commas such as 443,8443. Each must be between 1 and 65535, without repeats.";
+		}
+	} else if (!isValidPortText(portText)) {
 		errors.port = "Port must be a number between 1 and 65535.";
 	}
 	const usageCoefficient = Number(values.usageCoefficient);

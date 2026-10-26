@@ -19,6 +19,7 @@ import { fetch, getAPIErrorMessage } from "service/http";
 import {
 	buildInboundPayload,
 	getInboundTraffic,
+	inboundPortNumbers,
 	type InboundFormValues,
 	protocolOptions,
 	type RawInbound,
@@ -417,9 +418,12 @@ export const InboundsManager: FC = () => {
 
 			const portNumber =
 				typeof inbound.port === "string" ? Number(inbound.port) : inbound.port;
+			const listedPorts = inboundPortNumbers(String(inbound.port ?? ""));
 			const nextPort = Number.isFinite(portNumber)
 				? portNumber + 1
-				: inbound.port;
+				: listedPorts.length > 1
+					? listedPorts.map((port) => port + 1).join(",")
+					: inbound.port;
 
 			setCloneTarget({
 				...inbound,

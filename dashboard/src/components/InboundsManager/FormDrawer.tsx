@@ -78,6 +78,8 @@ import {
 	tlsFingerprintOptions,
 	tlsUsageOptions,
 	tlsVersionOptions,
+	inboundPortNumbers,
+	supportsMultiplePorts,
 	validateInboundFormFields,
 	validateInboundFormValues,
 } from "utils/inbounds";
@@ -941,8 +943,7 @@ export const InboundFormModal: FC<Props> = ({
 			setPortWarning(null);
 			return;
 		}
-		const numeric = Number(portValue);
-		if (Number.isFinite(numeric) && BLOCKED_PORTS.has(numeric)) {
+		if (inboundPortNumbers(portValue).some((port) => BLOCKED_PORTS.has(port))) {
 			setPortWarning(t("inbounds.portWarningBlocked"));
 		} else {
 			setPortWarning(null);
@@ -980,7 +981,9 @@ export const InboundFormModal: FC<Props> = ({
 						? inb.targets
 						: ["master"];
 				return (
-					inb.port?.toString() === portValue &&
+					inboundPortNumbers(portValue).some((port) =>
+						inboundPortNumbers(String(inb.port ?? "")).includes(port),
+					) &&
 					inboundTargets.some((targetId) => selectedTargets.has(targetId))
 				);
 			})
@@ -1507,16 +1510,11 @@ export const InboundFormModal: FC<Props> = ({
 										<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 											<FormControl required isInvalid={!!portError || !!fieldValidationErrors.port}>
 												<FormLabel helpKey="portHelp">{t("port")}</FormLabel>
-												<FormNumberField
-													control={control}
-													name="port"
-													rules={{ required: true }}
-													inputMode="numeric"
-													min={1}
-													max={65535}
-													placeholder="443"
+												<Input
+													{...register("port", { required: true })}
+													placeholder={supportsMultiplePorts(currentProtocol) ? "443,8443" : "443"}
 													disabled={currentProtocol === "l2tp" || currentProtocol === "ikev2" || currentProtocol === "gre" || currentProtocol === "web"}
-													invalid={!!portError || !!fieldValidationErrors.port}
+													aria-invalid={!!portError || !!fieldValidationErrors.port}
 												/>
 												<div className="flex flex-row items-center gap-2 justify-between mt-1">
 													<Button onClick={() => generateRandomPort()} disabled={
@@ -1528,6 +1526,11 @@ export const InboundFormModal: FC<Props> = ({
 														{t("inbounds.randomPort")}
 													</Button>
 												</div>
+												{supportsMultiplePorts(currentProtocol) && (
+													<p className="text-[0.75rem] text-muted-foreground mt-1">
+														{t("inbounds.portListHint")}
+													</p>
+												)}
 												{portWarning && (
 													<p className="text-[0.75rem] text-yellow-600 mt-1">
 														{portWarning}

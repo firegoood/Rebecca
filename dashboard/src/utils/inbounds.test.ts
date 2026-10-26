@@ -497,3 +497,31 @@ describe("XHTTP inbound settings", () => {
 		expect(corrected.xhttpXmuxHKeepAlivePeriod).toBeUndefined();
 	});
 });
+
+describe("inbound port lists", () => {
+	it("accepts several ports for Xray proxy inbounds and writes them as one value", () => {
+		const vless = createDefaultInboundForm("vless");
+		Object.assign(vless, { tag: "multi", port: "443, 8443" });
+		expect(validateInboundFormFields(vless)).toEqual({});
+		expect(buildInboundPayload(vless).port).toBe("443,8443");
+
+		const single = createDefaultInboundForm("vless");
+		Object.assign(single, { tag: "single", port: "443" });
+		expect(buildInboundPayload(single).port).toBe(443);
+	});
+
+	it("rejects repeated, out-of-range or malformed lists", () => {
+		const vless = createDefaultInboundForm("vless");
+		Object.assign(vless, { tag: "bad" });
+		for (const port of ["443,443", "443,70000", "443,", "443,abc"]) {
+			vless.port = port;
+			expect(validateInboundFormFields(vless).port).toBeTruthy();
+		}
+	});
+
+	it("keeps single-port protocols to one port", () => {
+		const openvpn = createDefaultInboundForm("openvpn");
+		Object.assign(openvpn, { tag: "ov", port: "1194,1195" });
+		expect(validateInboundFormFields(openvpn).port).toBeTruthy();
+	});
+});
