@@ -202,8 +202,9 @@ const NodesUsageAnalytics: FC = () => {
 	);
 
 	const nodeUsageChart = useMemo(() => {
-		const series = nodeUsageSlices.map((slice) => slice.total);
-		const labels = nodeUsageSlices.map((slice) => slice.nodeName);
+		const activeSlices = nodeUsageSlices.filter((slice) => slice.total > 0);
+		const series = activeSlices.map((slice) => slice.total);
+		const labels = activeSlices.map((slice) => slice.nodeName);
 		return createUsageConfig(
 			colorMode,
 			`${t("userDialog.total")} ${formatBytes(totalNodeUsage || 0, 2)}`,
@@ -246,8 +247,9 @@ const NodesUsageAnalytics: FC = () => {
 	);
 
 	const adminDonutChart = useMemo(() => {
-		const series = adminTotalsSlices.map((slice) => slice.total);
-		const labels = adminTotalsSlices.map((slice) => slice.nodeName);
+		const activeSlices = adminTotalsSlices.filter((slice) => slice.total > 0);
+		const series = activeSlices.map((slice) => slice.total);
+		const labels = activeSlices.map((slice) => slice.nodeName);
 		return createUsageConfig(
 			colorMode,
 			`${t("userDialog.total")} ${formatBytes(totalAdminUsage || 0, 2)}`,
