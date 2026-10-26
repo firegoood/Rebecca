@@ -4,13 +4,13 @@ import { cn } from "lib/cn";
 import type { ComponentProps, ReactNode } from "react";
 
 const SIZE_CLASSES = {
-	sm: "sm:max-w-md",
-	md: "sm:max-w-lg",
-	lg: "sm:max-w-2xl",
-	xl: "sm:max-w-3xl",
-	"2xl": "sm:max-w-4xl",
-	"3xl": "sm:max-w-5xl",
-	"4xl": "sm:max-w-6xl",
+	sm: "sm:max-w-md max-h-[calc(100dvh-2rem)]",
+	md: "sm:max-w-lg max-h-[calc(100dvh-2rem)]",
+	lg: "sm:max-w-2xl max-h-[calc(100dvh-2rem)]",
+	xl: "sm:max-w-3xl max-h-[calc(100dvh-2rem)]",
+	"2xl": "sm:max-w-4xl max-h-[calc(100dvh-2rem)]",
+	"3xl": "sm:max-w-5xl max-h-[calc(100dvh-2rem)]",
+	"4xl": "sm:max-w-6xl max-h-[calc(100dvh-2rem)]",
 	full: "max-w-[100vw] h-[100dvh] max-h-[100dvh]",
 } as const;
 
