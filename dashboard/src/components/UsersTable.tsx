@@ -84,7 +84,7 @@ const UserSpeed: FC<{ user: UserListItem }> = ({ user }) => {
 		return <p className="text-panel-text-muted">—</p>;
 	}
 	return (
-		<div dir="ltr" className="flex flex-col gap-0 text-[0.75rem] leading-[1.375]">
+		<div dir="ltr" className="rb-stat-pair flex flex-col gap-0 text-[0.75rem] leading-[1.375]">
 			<p><span aria-hidden="true">↑</span> <span className="sr-only">{t("usersTable.uploadSpeed")}: </span>{formatBytes(upload)}/s</p>
 			<p><span aria-hidden="true">↓</span> <span className="sr-only">{t("usersTable.downloadSpeed")}: </span>{formatBytes(download)}/s</p>
 		</div>

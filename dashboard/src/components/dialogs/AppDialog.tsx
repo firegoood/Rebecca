@@ -40,14 +40,14 @@ export const AppDialog = ({
 	footerProps,
 }: AppDialogProps) => (
 	<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-		<DialogContent {...contentProps} className={cn(SIZE_CLASSES[size], contentProps?.className)}>
-			<DialogHeader {...headerProps}>
+		<DialogContent {...contentProps} className={cn(SIZE_CLASSES[size], "flex flex-col", contentProps?.className)}>
+			<DialogHeader {...headerProps} className={cn("shrink-0", headerProps?.className)}>
 				<DialogTitle>{title}</DialogTitle>
 			</DialogHeader>
-			<div {...bodyProps} className={cn("px-5 py-4 overflow-y-auto", bodyProps?.className)}>
+			<div {...bodyProps} className={cn("min-h-0 flex-1 px-5 py-4 overflow-y-auto", bodyProps?.className)}>
 				{children}
 			</div>
-			{footer != null && <DialogFooter {...footerProps}>{footer}</DialogFooter>}
+			{footer != null && <DialogFooter {...footerProps} className={cn("shrink-0", footerProps?.className)}>{footer}</DialogFooter>}
 		</DialogContent>
 	</Dialog>
 );
