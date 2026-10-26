@@ -168,11 +168,17 @@ const NodesUsageAnalytics: FC = () => {
 		(raw: any): NodeUsageSlice[] => {
 			if (!raw) return [];
 			const values = Array.isArray(raw) ? raw : Object.values(raw);
-			return values.map((entry: any) => ({
-				nodeId: Number(entry?.node_id ?? 0),
-				nodeName: entry?.node_name ?? t("nodes.unknownNode"),
-				total: Number(entry?.uplink ?? 0) + Number(entry?.downlink ?? 0),
-			}));
+			return values.map((entry: any) => {
+				const traffic =
+					entry?.used_traffic != null
+						? Number(entry.used_traffic)
+						: Number(entry?.uplink ?? 0) + Number(entry?.downlink ?? 0);
+				return {
+					nodeId: Number(entry?.node_id ?? 0),
+					nodeName: entry?.node_name ?? t("nodes.unknownNode"),
+					total: traffic,
+				};
+			});
 		},
 		[t],
 	);
