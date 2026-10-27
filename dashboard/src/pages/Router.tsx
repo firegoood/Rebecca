@@ -16,6 +16,7 @@ import {
 } from "react-router-dom";
 import { fetch } from "../service/http";
 import { recoverFromStaleChunk } from "../utils/chunkRecovery";
+import { hasRememberedSession, setRememberedSession } from "../utils/session";
 import { Login } from "./Login";
 
 const AppLayout = lazy(async () => ({
@@ -172,6 +173,9 @@ const SESSION_CHECK_MAX_ATTEMPTS = 40;
 const SESSION_REJECTED_MAX_ATTEMPTS = 2;
 
 const fetchSessionWithRetry = async () => {
+	const maxRejectedAttempts = hasRememberedSession()
+		? SESSION_REJECTED_MAX_ATTEMPTS
+		: 1;
 	for (let attempt = 1; ; attempt += 1) {
 		try {
 			return await fetch<{ state?: string }>("/auth/session");
@@ -182,7 +186,7 @@ const fetchSessionWithRetry = async () => {
 			const rejected = status === 401 || status === 403;
 			if (
 				attempt >=
-				(rejected ? SESSION_REJECTED_MAX_ATTEMPTS : SESSION_CHECK_MAX_ATTEMPTS)
+				(rejected ? maxRejectedAttempts : SESSION_CHECK_MAX_ATTEMPTS)
 			) {
 				throw error;
 			}
@@ -200,8 +204,10 @@ const fetchAdminLoader = async ({ request }: { request: Request }) => {
 			const pathname = new URL(request.url).pathname.replace(/\/+$/, "");
 			if (!pathname.endsWith("/users")) throw redirect("/users/");
 		} else if (response?.state !== "active") {
+			setRememberedSession(false);
 			throw redirect("/login/");
 		}
+		setRememberedSession(true);
 		if (response && typeof response === "object" && "error" in response) {
 			throw new Error(`API error: ${response.error || "Unknown error"}`);
 		}
@@ -211,6 +217,7 @@ const fetchAdminLoader = async ({ request }: { request: Request }) => {
 			(error as { response?: { status?: number }; status?: number })?.response
 				?.status ?? (error as { status?: number })?.status;
 		if (status === 401 || status === 403) {
+			setRememberedSession(false);
 			throw redirect("/login/");
 		}
 		console.error("Loader error:", error);
