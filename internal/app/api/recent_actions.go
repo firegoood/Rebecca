@@ -269,12 +269,12 @@ SET snapshot = NULL, rollback_status = 'expired'
 WHERE snapshot IS NOT NULL AND rollback_status = 'available' AND snapshot_expires_at IS NOT NULL AND snapshot_expires_at <= ?`, dbTimestamp(now)); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `DELETE FROM recent_actions WHERE created_at < ?`, dbTimestamp(now.Add(-recentActionHistoryLifetime)))
+	_, err := tx.ExecContext(ctx, `DELETE FROM recent_actions WHERE created_at < ? AND resource_type <> 'admin'`, dbTimestamp(now.Add(-recentActionHistoryLifetime)))
 	if err != nil {
 		return err
 	}
 	for {
-		rows, err := tx.QueryContext(ctx, `SELECT id FROM recent_actions ORDER BY id DESC LIMIT 250 OFFSET ?`, recentActionHistoryMaxRows)
+		rows, err := tx.QueryContext(ctx, `SELECT id FROM recent_actions WHERE resource_type <> 'admin' ORDER BY id DESC LIMIT 250 OFFSET ?`, recentActionHistoryMaxRows)
 		if err != nil {
 			return err
 		}
