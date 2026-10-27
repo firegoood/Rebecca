@@ -67,6 +67,7 @@ import {
 } from "utils/searchMatch";
 import { generateErrorMessage } from "utils/toastHandler";
 import { AppleEmojiText } from "./common/AppleEmojiText";
+import { EmojiShortcodeInput } from "./common/EmojiShortcodeInput";
 import { DeleteIcon } from "./common/DeleteIcon";
 import {
 	MultiValueAutocomplete,
@@ -1066,14 +1067,15 @@ const HostForm: FC<HostFormProps> = ({
 						error={remarkError ? t(remarkError) : undefined}
 					>
 						<div className="relative">
-							<UiInput
+							<EmojiShortcodeInput
 								ref={initialFocusRef}
 								value={data.remark}
 								maxLength={isWireGuardInbound ? 15 : undefined}
 								placeholder={t("hostsPage.remarkPlaceholder")}
 								aria-invalid={Boolean(remarkError) || undefined}
 								className={cn(!isProfileHostInbound && "pe-10")}
-								onChange={(event) => onChange("remark", event.target.value)}
+								enabled={!isProfileHostInbound}
+								onChange={(value) => onChange("remark", value)}
 							/>
 							{!isProfileHostInbound ? (
 								<div className="absolute inset-y-0 end-1.5 flex items-center">
