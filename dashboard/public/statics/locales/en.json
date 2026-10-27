@@ -4045,5 +4045,12 @@
 	"pages.xray.observatory.timeout": "Timeout",
 	"pages.xray.observatory.httpMethod": "HTTP method",
 	"pages.xray.routingScript": "Routing script",
-	"pages.xray.routingScriptDesc": "Lua script that takes over outbound selection. Leave empty to disable."
+	"pages.xray.routingScriptDesc": "Lua script that takes over outbound selection. Leave empty to disable.",
+	"adminHistory.tab": "History",
+	"adminHistory.empty": "No history for this admin yet.",
+	"adminHistory.loadMore": "Load more",
+	"adminHistory.by": "by {{name}}",
+	"adminHistory.error": "Could not load history.",
+	"recentActions.fields.users_usage": "Used traffic",
+	"recentActions.fields.created_traffic": "Charged traffic"
 }

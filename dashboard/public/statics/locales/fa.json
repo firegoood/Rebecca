@@ -4044,5 +4044,12 @@
 	"pages.xray.observatory.timeout": "مهلت زمانی",
 	"pages.xray.observatory.httpMethod": "متد HTTP",
 	"pages.xray.routingScript": "اسکریپت مسیردهی",
-	"pages.xray.routingScriptDesc": "اسکریپت Lua که انتخاب خروجی را بر عهده می‌گیرد. برای غیرفعال کردن خالی بگذارید."
+	"pages.xray.routingScriptDesc": "اسکریپت Lua که انتخاب خروجی را بر عهده می‌گیرد. برای غیرفعال کردن خالی بگذارید.",
+	"adminHistory.tab": "تاریخچه",
+	"adminHistory.empty": "هنوز تاریخچه‌ای برای این ادمین ثبت نشده است.",
+	"adminHistory.loadMore": "نمایش بیشتر",
+	"adminHistory.by": "توسط {{name}}",
+	"adminHistory.error": "بارگذاری تاریخچه انجام نشد.",
+	"recentActions.fields.users_usage": "حجم مصرفی",
+	"recentActions.fields.created_traffic": "حجم شارژی"
 }

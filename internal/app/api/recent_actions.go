@@ -94,6 +94,7 @@ type recentActionListFilter struct {
 	MatchWholeWord bool
 	ActionTypes    []string
 	ResourceTypes  []string
+	ResourceKey    string
 	Statuses       []string
 	CreatedFrom    string
 	CreatedBefore  string
@@ -605,6 +606,10 @@ func (s *Server) listRecentActions(ctx context.Context, beforeID int64, limit in
 		}
 		addRecentActionListFilter(&clauses, &args, "action_type", filter.ActionTypes)
 		addRecentActionListFilter(&clauses, &args, "resource_type", filter.ResourceTypes)
+		if filter.ResourceKey != "" {
+			clauses = append(clauses, "resource_key = ?")
+			args = append(args, filter.ResourceKey)
+		}
 		addRecentActionListFilter(&clauses, &args, "rollback_status", filter.Statuses)
 		if filter.CreatedFrom != "" && filter.CreatedBefore != "" {
 			clauses = append(clauses, "created_at >= ? AND created_at < ?")

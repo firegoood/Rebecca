@@ -20,6 +20,7 @@ import { CheckRow } from "components/ui/check-row";
 import { NumberField } from "components/ui/number-field";
 import { Select, SelectContent, SelectItem, SelectItemText, SelectTrigger, SelectValue } from "components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "components/ui/tabs";
+import { AdminHistoryPanel } from "components/admins/AdminHistoryPanel";
 import { getDefaultPermissionsForRole } from "constants/adminPermissions";
 import { useAdminsStore } from "contexts/AdminsContext";
 import useGetUser from "hooks/useGetUser";
@@ -41,7 +42,7 @@ const MB_IN_BYTES = 1024 * 1024;
 const SUCCESS_CLOSE_DELAY_MS = 1000;
 const DEFAULT_MATCH = { matchCase: false, matchWholeWord: false } as const;
 
-type TabValue = "details" | "permissions";
+type TabValue = "details" | "permissions" | "history";
 
 const clonePermissions = (role: AdminRole): AdminPermissions => getDefaultPermissionsForRole(role);
 
@@ -1257,6 +1258,7 @@ export const AdminDialog: FC = () => {
 							<TabsList className="w-full">
 								<TabsTrigger value="details">{t("details")}</TabsTrigger>
 								<TabsTrigger value="permissions">{t("admins.permissionsTabLabel")}</TabsTrigger>
+								{mode === "edit" && admin ? <TabsTrigger value="history">{t("adminHistory.tab")}</TabsTrigger> : null}
 							</TabsList>
 						</div>
 						<div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
@@ -1266,6 +1268,11 @@ export const AdminDialog: FC = () => {
 							<TabsContent value="permissions" className="mt-0">
 								{permissionsTab}
 							</TabsContent>
+							{mode === "edit" && admin ? (
+								<TabsContent value="history" className="mt-0">
+									<AdminHistoryPanel username={admin.username} />
+								</TabsContent>
+							) : null}
 						</div>
 					</Tabs>
 
