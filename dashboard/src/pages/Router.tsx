@@ -2,6 +2,7 @@ import { Button } from "components/ui/button";
 import { CircleAlert, CircleCheck, Info, TriangleAlert } from "lucide-react";
 import { cn } from "lib/cn";
 
+import { BootScreen } from "../components/BootScreen";
 import { PageLoadingSkeleton } from "../components/ui";
 import { type ComponentType, lazy, Suspense, useEffect } from "react";
 import { useTranslation } from "react-i18next";
@@ -168,6 +169,7 @@ normalizeLegacyHashRoute(dashboardBasename);
 
 const SESSION_CHECK_RETRY_DELAY_MS = 1500;
 const SESSION_CHECK_MAX_ATTEMPTS = 40;
+const SESSION_REJECTED_MAX_ATTEMPTS = 2;
 
 const fetchSessionWithRetry = async () => {
 	for (let attempt = 1; ; attempt += 1) {
@@ -177,10 +179,10 @@ const fetchSessionWithRetry = async () => {
 			const status =
 				(error as { response?: { status?: number }; status?: number })?.response
 					?.status ?? (error as { status?: number })?.status;
+			const rejected = status === 401 || status === 403;
 			if (
-				status === 401 ||
-				status === 403 ||
-				attempt >= SESSION_CHECK_MAX_ATTEMPTS
+				attempt >=
+				(rejected ? SESSION_REJECTED_MAX_ATTEMPTS : SESSION_CHECK_MAX_ATTEMPTS)
 			) {
 				throw error;
 			}
@@ -220,8 +222,12 @@ export const router = createBrowserRouter(
 	[
 		{
 			path: "/",
-			element: <LazyPage Page={AppLayout} />,
-			hydrateFallbackElement: <PageLoading />,
+			element: (
+				<Suspense fallback={<BootScreen />}>
+					<AppLayout />
+				</Suspense>
+			),
+			hydrateFallbackElement: <BootScreen />,
 			errorElement: <RouteErrorPage />,
 			loader: fetchAdminLoader,
 			children: [
