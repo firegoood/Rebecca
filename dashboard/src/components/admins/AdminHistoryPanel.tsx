@@ -14,7 +14,6 @@ type AdminHistoryChange = {
 
 type AdminHistoryEntry = {
 	id: number;
-	summary: string;
 	actor_username: string;
 	created_at: string;
 	changes?: AdminHistoryChange[];
@@ -24,6 +23,9 @@ type AdminHistoryResponse = {
 	actions: AdminHistoryEntry[];
 	next_before_id?: number | null;
 };
+
+const formatChangeValue = (field: string, value: string) =>
+	field === "expire" && /^\d+$/.test(value) ? dayjs.unix(Number(value)).format("YYYY-MM-DD HH:mm") : value;
 
 export const AdminHistoryPanel: FC<{ username: string }> = ({ username }) => {
 	const { t } = useTranslation();
@@ -52,17 +54,25 @@ export const AdminHistoryPanel: FC<{ username: string }> = ({ username }) => {
 		<div className="flex flex-col gap-3">
 			{entries.map((entry) => (
 				<div key={entry.id} className="rounded-md border px-3 py-2">
-					<div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-						<span className="rb-tabular">{dayjs(entry.created_at).format("YYYY-MM-DD HH:mm")}</span>
-						<span dir="ltr">{t("adminHistory.by", { name: entry.actor_username })}</span>
+					<div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+						<span dir="ltr" className="font-semibold text-foreground">
+							{t("adminHistory.by", { name: entry.actor_username })}
+						</span>
+						<span className="rb-tabular text-muted-foreground">{dayjs(entry.created_at).format("YYYY-MM-DD HH:mm")}</span>
 					</div>
-					<p className="mt-1 text-sm font-medium">{entry.summary}</p>
 					{entry.changes?.length ? (
-						<ul className="mt-1 flex flex-col gap-0.5 text-xs text-muted-foreground">
+						<ul className="mt-2 flex flex-col gap-1.5">
 							{entry.changes.map((change) => (
-								<li key={change.field} dir="ltr">
-									{t(`recentActions.fields.${change.field}`, { defaultValue: change.field })}: {change.before} → {change.after}
-									{change.delta ? ` (${change.delta})` : ""}
+								<li key={change.field} dir="ltr" className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
+									<span className="font-semibold text-foreground">
+										{t(`recentActions.fields.${change.field}`, { defaultValue: change.field })}
+									</span>
+									<span className="text-muted-foreground">{formatChangeValue(change.field, change.before)}</span>
+									<span className="text-muted-foreground">→</span>
+									<span className="font-bold text-foreground">{formatChangeValue(change.field, change.after)}</span>
+									{change.delta ? (
+										<span className="rb-tabular rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-foreground">{change.delta}</span>
+									) : null}
 								</li>
 							))}
 						</ul>

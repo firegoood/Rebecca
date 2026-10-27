@@ -5,7 +5,7 @@ import { Input } from "components/ui/input";
 import { Textarea } from "components/ui/textarea";
 import { toast } from "components/ui/sonner";
 import { withClass } from "lib/withClass";
-import { SlidersHorizontal, RefreshCw, Key, Pencil, Play, CirclePlus, ShieldCheck, Trash2, Ban } from "lucide-react";
+import { SlidersHorizontal, RefreshCw, Key, Pencil, Play, CirclePlus, ShieldCheck, Trash2, Ban, History } from "lucide-react";
 
 import { useDisclosure } from "hooks/useDisclosure";
 import { useIntervalRefresh } from "hooks/useIntervalRefresh";
@@ -841,6 +841,12 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 					label: t("edit"),
 					icon: <Pencil className="w-[16px]" />,
 					onClick: () => openAdminDialog(admin),
+				},
+				{
+					id: "history",
+					label: t("adminHistory.tab"),
+					icon: <History className="w-[16px]" />,
+					onClick: () => openAdminDialog(admin, "history"),
 				},
 				{
 					id: "permissions",
