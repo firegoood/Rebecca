@@ -4,6 +4,7 @@ import {
 	buildInboundPayload,
 	createDefaultInboundForm,
 	getInboundTraffic,
+	inboundTagAllowsEmoji,
 	rawInboundToFormValues,
 	type RawInbound,
 	validateInboundFormFields,
@@ -523,5 +524,14 @@ describe("inbound port lists", () => {
 		const openvpn = createDefaultInboundForm("openvpn");
 		Object.assign(openvpn, { tag: "ov", port: "1194,1195" });
 		expect(validateInboundFormFields(openvpn).port).toBeTruthy();
+	});
+});
+
+describe("inbound tags", () => {
+	it("allows emoji on Xray inbounds and keeps native VPN names ASCII", () => {
+		expect(inboundTagAllowsEmoji("vless")).toBe(true);
+		expect(inboundTagAllowsEmoji("socks")).toBe(true);
+		expect(inboundTagAllowsEmoji("wireguard")).toBe(false);
+		expect(inboundTagAllowsEmoji("openvpn")).toBe(false);
 	});
 });

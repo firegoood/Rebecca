@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "components/ui/tabs";
 import { Route, Plus, X } from "lucide-react";
 import { type FC, useEffect, useMemo, useState } from "react";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
+import { EmojiShortcodeInput } from "components/common/EmojiShortcodeInput";
 import { useTranslation } from "react-i18next";
 import { isPlainObject } from "utils/jsonFormatting";
 import { JsonEditor } from "./JsonEditor";
@@ -658,7 +659,18 @@ export const RuleModal: FC<RuleModalProps> = ({
 												<UiInput placeholder="53,443,1000-2000" {...register("vlessRoute")} />
 											</FormField>
 											<FormField label={t("pages.xray.rules.ruleTag")}>
-												<UiInput {...register("ruleTag")} />
+												<Controller
+													control={control}
+													name="ruleTag"
+													render={({ field }) => (
+														<EmojiShortcodeInput
+															ref={field.ref}
+															value={field.value ?? ""}
+															onChange={field.onChange}
+															onBlur={field.onBlur}
+														/>
+													)}
+												/>
 											</FormField>
 										</div>
 									</FormSection>

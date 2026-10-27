@@ -13,7 +13,8 @@ import {
 
 
 import { type FC, useCallback, useEffect, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
+import { EmojiShortcodeInput } from "components/common/EmojiShortcodeInput";
 import { useTranslation } from "react-i18next";
 import { isPlainObject } from "utils/jsonFormatting";
 import { JsonEditor } from "./JsonEditor";
@@ -378,7 +379,18 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 											<div className="flex flex-col gap-4 items-stretch">
 												<Field data-invalid={duplicateTag}>
 													<FieldLabel>{t("pages.xray.balancer.tag")}</FieldLabel>
-													<Input {...modalForm.register("tag")} />
+													<Controller
+														control={modalForm.control}
+														name="tag"
+														render={({ field }) => (
+															<EmojiShortcodeInput
+																ref={field.ref}
+																value={field.value ?? ""}
+																onChange={field.onChange}
+																onBlur={field.onBlur}
+															/>
+														)}
+													/>
 													{duplicateTag ? (
 														<FieldError>
 															{t("pages.xray.balancer.tagError")}
