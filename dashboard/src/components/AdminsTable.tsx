@@ -18,6 +18,7 @@ import type { SortingState } from "@tanstack/react-table";
 import { useAdminsStore } from "contexts/AdminsContext";
 import { AddTrafficDialog } from "components/AddTrafficDialog";
 import { AdminsOverviewBand } from "components/admins/AdminsOverviewBand";
+import { adminsOverviewSelection, nextAdminsFiltersForOverview } from "utils/adminsOverview";
 import { DataTableColumnMenu } from "components/ui/DataTableColumnMenu";
 import { RefreshSplitButton } from "components/users/RefreshSplitButton";
 import { useContainerMinWidths } from "hooks/useContainerMinWidths";
@@ -170,6 +171,7 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 	const loading = useAdminsStore((state) => state.loading);
 	const total = useAdminsStore((state) => state.total);
 	const filters = useAdminsStore((state) => state.filters);
+	const onFilterChange = useAdminsStore((state) => state.onFilterChange);
 	const fetchAdmins = useAdminsStore((state) => state.fetchAdmins);
 	const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>({});
 	const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(5_000);
@@ -1011,6 +1013,8 @@ export const AdminsTable: FC<AdminsTableProps> = ({
 						reseller={summaryData.resellerCount}
 						standard={summaryData.standardCount}
 						locale={locale}
+					selection={adminsOverviewSelection(filters)}
+					onSelect={(target) => onFilterChange(nextAdminsFiltersForOverview(filters, target))}
 					/>
 					<div className="border-t border-panel-border! p-3">
 						<div className="flex flex-wrap items-center gap-2">
