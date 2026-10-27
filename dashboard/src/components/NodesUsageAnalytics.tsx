@@ -297,23 +297,14 @@ const NodesUsageAnalytics: FC = () => {
 		const seen = new Set<number>();
 
 		nodeUsageSlices.forEach((slice) => {
-			if (slice.nodeId > 0 && !seen.has(slice.nodeId)) {
+			if (slice.nodeId > 0 && slice.total > 0 && !seen.has(slice.nodeId)) {
 				seen.add(slice.nodeId);
 				options.push({ value: slice.nodeId, label: slice.nodeName });
 			}
 		});
 
-		if (Array.isArray(nodes)) {
-			nodes.forEach((node) => {
-				if (node?.id && !seen.has(node.id)) {
-					seen.add(node.id);
-					options.push({ value: node.id, label: node.name });
-				}
-			});
-		}
-
 		return options.sort((a, b) => a.label.localeCompare(b.label));
-	}, [nodeUsageSlices, nodes]);
+	}, [nodeUsageSlices]);
 
 	const adminNodeOptions = useMemo(() => {
 		const options: { value: number; label: string }[] = [];
@@ -460,21 +451,22 @@ const NodesUsageAnalytics: FC = () => {
 	]);
 
 	useEffect(() => {
-		if (nodeDailySelectedNodeId !== null) return;
-		const topNode = nodeUsageSlices
-			.filter((slice) => slice.nodeId > 0)
-			.sort((a, b) => b.total - a.total)[0]?.nodeId;
-		if (topNode && topNode > 0) {
-			setNodeDailySelectedNodeId(topNode);
+		const validNodes = nodeUsageSlices.filter(
+			(slice) => slice.nodeId > 0 && slice.total > 0,
+		);
+		if (!validNodes.length) {
+			setNodeDailySelectedNodeId(null);
 			return;
 		}
-		if (Array.isArray(nodes) && nodes.length) {
-			const firstNode = nodes[0]?.id;
-			if (firstNode) {
-				setNodeDailySelectedNodeId(firstNode);
-			}
+		if (
+			nodeDailySelectedNodeId !== null &&
+			validNodes.some((slice) => slice.nodeId === nodeDailySelectedNodeId)
+		) {
+			return;
 		}
-	}, [nodeDailySelectedNodeId, nodeUsageSlices, nodes]);
+		const topNode = [...validNodes].sort((a, b) => b.total - a.total)[0]?.nodeId;
+		setNodeDailySelectedNodeId(topNode ?? validNodes[0]?.nodeId ?? null);
+	}, [nodeDailySelectedNodeId, nodeUsageSlices]);
 
 	useEffect(() => {
 		setSelectedAdminNodeId(null);
@@ -773,7 +765,7 @@ const NodesUsageAnalytics: FC = () => {
 								setNodeDailySelectedNodeId(
 									Number.isFinite(parsed) && parsed > 0 ? parsed : null,
 								);
-							}} placeholder={t("nodes.selectNode")} className="md:min-w-[180px]! w-full md:w-auto">
+							}} placeholder={t("nodes.selectNode")} disabled={nodeDailyOptions.length === 0} className="md:min-w-[180px]! w-full md:w-auto">
 							{nodeDailyOptions.map((option) => (
 								<option key={option.value} value={option.value}>
 									{option.label}
