@@ -421,11 +421,11 @@ const DynamicTokensPopover: FC = () => {
 					
 					
 					<div className="p-3">
-						<div className="pr-5 leading-[1.4]">
+						<div className="pe-5 leading-[1.4]">
 							<p className="mb-2">{t("hostsDialog.desc")}</p>
 							{DYNAMIC_TOKENS.map(({ token, labelKey }) => (
 								<p key={token} className="mt-1">
-									<Badge className="mr-2">{token}</Badge>
+									<Badge className="me-2">{token}</Badge>
 									<AppleEmojiText>{t(labelKey)}</AppleEmojiText>
 								</p>
 							))}

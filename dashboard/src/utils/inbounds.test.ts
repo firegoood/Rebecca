@@ -535,3 +535,32 @@ describe("inbound tags", () => {
 		expect(inboundTagAllowsEmoji("openvpn")).toBe(false);
 	});
 });
+
+describe("TCP header inbound settings", () => {
+	it("opens and saves an HTTP header that was created with an empty path", () => {
+		const raw: RawInbound = {
+			tag: "tcp-empty-header",
+			port: 443,
+			protocol: "vless",
+			settings: { decryption: "none" },
+			streamSettings: {
+				network: "tcp",
+				security: "none",
+				tcpSettings: {
+					header: {
+						type: "http",
+						request: { version: "1.1", method: "GET", path: [], headers: {} },
+					},
+				},
+			},
+		};
+
+		const values = rawInboundToFormValues(raw);
+		expect(values.tcpHttpPath).toBe("");
+		expect(
+			buildInboundPayload(values, { initial: raw }).streamSettings?.tcpSettings,
+		).toMatchObject({
+			header: { type: "http", request: { path: [] } },
+		});
+	});
+});

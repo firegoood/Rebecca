@@ -584,7 +584,7 @@ export const PanelSelect = forwardRef<HTMLInputElement, PanelSelectProps>(
 							const input = event.currentTarget.querySelector("input");
 							input?.focus();
 							setMultiOpen(true);
-						}} className={cn(resolvedBorderColor, controlBg, focusBorderColor, focusRing, "border rounded-md px-1.5 py-1 [transition:border-color_0.15s_ease,_box-shadow_0.15s_ease,_background_0.15s_ease]", controlHeight, isRTL ? (rightElement ? "pl-10" : "pl-2") : "", isRTL ? "" : (rightElement ? "pr-10" : "pr-2"), disabledState ? "cursor-not-allowed" : "cursor-text", disabledState ? "opacity-60" : "opacity-100")}>
+						}} className={cn(resolvedBorderColor, controlBg, focusBorderColor, focusRing, "border rounded-md px-1.5 py-1 [transition:border-color_0.15s_ease,_box-shadow_0.15s_ease,_background_0.15s_ease]", controlHeight, rightElement ? "pe-10" : "pe-2", disabledState ? "cursor-not-allowed" : "cursor-text", disabledState ? "opacity-60" : "opacity-100")}>
 						<div className="flex flex-wrap gap-1.5 items-center">
 							{selectedValues.map((item) => (
 								<div key={item}>
@@ -608,7 +608,7 @@ export const PanelSelect = forwardRef<HTMLInputElement, PanelSelectProps>(
 							</div>
 						</div>
 						{rightElement && (
-							<div className={cn("absolute top-[7px] z-[1]", isRTL ? "left-[8px]" : "", isRTL ? "" : "right-[8px]")}>
+							<div className="absolute top-[7px] z-[1] end-[8px]">
 								{rightElement}
 							</div>
 						)}
@@ -671,7 +671,7 @@ export const PanelSelect = forwardRef<HTMLInputElement, PanelSelectProps>(
 					readOnly
 				/>
 				<Popover open={singleOpen && !disabledState} onOpenChange={handleSingleOpenChange}>
-					<PopoverTrigger asChild><Button size={size === "md" ? "default" : size} disabled={disabledState} variant="outline" className={cn(controlBg, resolvedBorderColor, focusBorderColor, focusRing, hoverBorder, "w-full rounded-md justify-between text-start [&>span]:w-full [&>span]:justify-between", rightElement ? "pr-16" : "", controlHeight, selectedValues.length ? "font-medium" : "font-normal")}>
+					<PopoverTrigger asChild><Button size={size === "md" ? "default" : size} disabled={disabledState} variant="outline" className={cn(controlBg, resolvedBorderColor, focusBorderColor, focusRing, hoverBorder, "w-full rounded-md justify-between text-start [&>span]:w-full [&>span]:justify-between", rightElement ? "pe-16" : "", controlHeight, selectedValues.length ? "font-medium" : "font-normal")}>
 						<span className={cn("truncate", selectedValues.length ? "" : (mutedColor))}>
 							{renderLabel(buttonText)}
 						</span>
@@ -679,7 +679,7 @@ export const PanelSelect = forwardRef<HTMLInputElement, PanelSelectProps>(
 					{portalled ? <><div className="pointer-events-auto contents">{singleMenuList}</div></> : singleMenuList}
 				</Popover>
 				{rightElement && (
-					<div className={cn("absolute top-[50%] [transform:translateY(-50%)] z-[1]", isRTL ? "left-[8px]" : "", isRTL ? "" : "right-[36px]")}>
+					<div className="absolute top-[50%] [transform:translateY(-50%)] z-[1] end-[36px]">
 						{rightElement}
 					</div>
 				)}

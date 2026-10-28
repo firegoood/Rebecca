@@ -104,7 +104,7 @@ const UserActionDialog: FC<{ action: "reset" | "revoke" }> = ({ action }) => {
 				</Icon>
 			} contentProps={{ className: "mx-3" }} headerProps={{ className: "pt-6" }} footerProps={{ className: "flex" }} footer={
 				<>
-					<Button onClick={onClose} variant="outline" size="sm" className="mr-3 w-full">
+					<Button onClick={onClose} variant="outline" size="sm" className="me-3 w-full">
 						{t("cancel")}
 					</Button>
 					<Button onClick={onSubmit} size="sm" className={cn("bg-blue-600 text-white shadow-xs hover:bg-blue-700", "w-full")}>{loading ? <Spinner /> : undefined}
