@@ -274,7 +274,7 @@ const ThemePanel: FC<ThemePanelProps> = ({
 										</span>
 									</span>
 									{selected ? (
-										<span className="absolute right-2 top-2 text-panel-accent">
+										<span className="absolute end-2 top-2 text-panel-accent">
 											<Check className="size-4" />
 										</span>
 									) : null}

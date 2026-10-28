@@ -846,7 +846,7 @@ export const AdminDialog: FC = () => {
 							</FormField>
 						</div>
 						{isCreated ? (
-							<div className="flex flex-col gap-2 pl-1">
+							<div className="flex flex-col gap-2 ps-1">
 								<CheckRow
 									checked={item.show_user_traffic}
 									onChange={(next) => setServiceLimitValue(serviceId, { show_user_traffic: next })}
@@ -1065,7 +1065,7 @@ export const AdminDialog: FC = () => {
 					</CheckRow>
 				) : null}
 				{!isFullAccessRole && !usePerServiceTrafficLimits && (hasGlobalDataLimit || isCreatedTrafficMode) ? (
-					<div className="flex flex-col gap-2 pl-1">
+					<div className="flex flex-col gap-2 ps-1">
 						<CheckRow
 							checked={isCreatedTrafficMode}
 							onChange={(next) =>
@@ -1079,7 +1079,7 @@ export const AdminDialog: FC = () => {
 							{t("admins.limitByCreatedTraffic")}
 						</CheckRow>
 						{isCreatedTrafficMode ? (
-							<div className="flex flex-col gap-2 pl-6">
+							<div className="flex flex-col gap-2 ps-6">
 								<CheckRow checked={Boolean(showUserTrafficValue)} onChange={(next) => setValue("show_user_traffic", next, { shouldDirty: true })}>
 									{t("admins.showUserTraffic")}
 								</CheckRow>
