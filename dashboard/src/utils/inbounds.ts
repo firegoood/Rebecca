@@ -2660,7 +2660,7 @@ export const rawInboundToFormValues = (raw: RawInbound): InboundFormValues => {
 			stream?.tcpSettings?.header?.request?.headers?.Host,
 		),
 		tcpHttpPath: Array.isArray(stream?.tcpSettings?.header?.request?.path)
-			? stream.tcpSettings.header.request.path[0]
+			? (stream.tcpSettings.header.request.path[0] ?? "")
 			: base.tcpHttpPath,
 		grpcServiceName: stream?.grpcSettings?.serviceName ?? base.grpcServiceName,
 		grpcAuthority: stream?.grpcSettings?.authority ?? base.grpcAuthority,
