@@ -745,6 +745,24 @@ const MULTI_PORT_PROTOCOLS = new Set([
 export const supportsMultiplePorts = (protocol: string): boolean =>
 	MULTI_PORT_PROTOCOLS.has(protocol);
 
+const ASCII_TAG_PROTOCOLS = new Set([
+	"ssh",
+	"mtproto",
+	"web",
+	"openvpn",
+	"wireguard",
+	"amneziawg",
+	"sstp",
+	"gre",
+	"l2tp",
+	"pptp",
+	"ikev2",
+	"anyconnect",
+]);
+
+export const inboundTagAllowsEmoji = (protocol: string): boolean =>
+	!ASCII_TAG_PROTOCOLS.has(protocol);
+
 const isValidPortList = (value: string): boolean => {
 	const parts = value.split(",").map((part) => part.trim());
 	if (!parts.every((part) => isValidPortText(part))) return false;

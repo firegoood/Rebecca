@@ -39,6 +39,7 @@ import {
 	useState,
 } from "react";
 import { type Control, Controller, type Path, useFieldArray, useForm, useWatch } from "react-hook-form";
+import { EmojiShortcodeInput } from "components/common/EmojiShortcodeInput";
 import { useTranslation } from "react-i18next";
 import { canViewEntityNotes, type EntityNote } from "components/EntityNotePanel";
 import useGetUser from "hooks/useGetUser";
@@ -79,6 +80,7 @@ import {
 	tlsUsageOptions,
 	tlsVersionOptions,
 	inboundPortNumbers,
+	inboundTagAllowsEmoji,
 	supportsMultiplePorts,
 	validateInboundFormFields,
 	validateInboundFormValues,
@@ -1491,9 +1493,20 @@ export const InboundFormModal: FC<Props> = ({
 										<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 											<FormControl required isInvalid={!!tagError || !!fieldValidationErrors.tag}>
 												<FormLabel helpKey="inbounds.tagHelp">{t("inbounds.tag")}</FormLabel>
-												<Input
-													{...register("tag", { required: true })}
-													disabled={isEditMode}
+												<Controller
+													control={control}
+													name="tag"
+													rules={{ required: true }}
+													render={({ field }) => (
+														<EmojiShortcodeInput
+															ref={field.ref}
+															value={field.value ?? ""}
+															onChange={field.onChange}
+															onBlur={field.onBlur}
+															disabled={isEditMode}
+															enabled={inboundTagAllowsEmoji(currentProtocol)}
+														/>
+													)}
 												/>
 												{(tagError || fieldValidationErrors.tag) && (
 													<p className="text-[0.75rem] text-red-500 mt-1">

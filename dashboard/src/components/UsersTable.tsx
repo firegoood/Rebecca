@@ -13,6 +13,7 @@ import { Check, Copy, Link2, Pencil, QrCode, Trash2, RefreshCw, CalendarDays, Ch
 import type { SortingState } from "@tanstack/react-table";
 import AddFileIcon from "assets/add_file.svg?react";
 import { useDashboard } from "contexts/DashboardContext";
+import { nextUsersFiltersForOverview, usersOverviewSelection } from "utils/usersOverview";
 import dayjs from "dayjs";
 import useGetUser from "hooks/useGetUser";
 import {
@@ -288,8 +289,10 @@ export const UsersTable: FC<UsersTableProps> = ({
 		setQRCode,
 		setSubLink,
 		linkTemplates,
+		onFilterChange,
 	} = {
 		filters: useDashboard((state) => state.filters),
+		onFilterChange: useDashboard((state) => state.onFilterChange),
 		users: useDashboard((state) => state.users),
 		onEditingUser: useDashboard((state) => state.onEditingUser),
 		loading: useDashboard((state) => state.loading),
@@ -1227,6 +1230,8 @@ export const UsersTable: FC<UsersTableProps> = ({
 			<div className="border border-panel-border! bg-panel-surface rounded-xl overflow-hidden rb-users-header-card">
 				<UsersOverviewBand
 					bare
+					selection={usersOverviewSelection(filters)}
+					onSelect={(target) => onFilterChange(nextUsersFiltersForOverview(filters, target))}
 					total={usersResponse.total}
 					usersLimit={usersResponse.users_limit ?? null}
 					active={activeUsersCount}

@@ -2739,3 +2739,12 @@ input[type="number"] {
 .inbound-form-modal [data-form-section] [data-form-section]:first-child {
   border-top: 0;
 }
+
+.toaster ol,
+.toaster [data-sonner-toast] {
+  pointer-events: none;
+}
+
+.toaster [data-sonner-toast] [data-close-button] {
+  pointer-events: auto;
+}

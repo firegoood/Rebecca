@@ -20,7 +20,9 @@ import { CheckRow } from "components/ui/check-row";
 import { NumberField } from "components/ui/number-field";
 import { Select, SelectContent, SelectItem, SelectItemText, SelectTrigger, SelectValue } from "components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "components/ui/tabs";
+import { AdminHistoryPanel } from "components/admins/AdminHistoryPanel";
 import { getDefaultPermissionsForRole } from "constants/adminPermissions";
+import type { AdminDialogTab } from "contexts/AdminsContext";
 import { useAdminsStore } from "contexts/AdminsContext";
 import useGetUser from "hooks/useGetUser";
 import { cn } from "lib/cn";
@@ -40,8 +42,6 @@ const GB_IN_BYTES = 1024 * 1024 * 1024;
 const MB_IN_BYTES = 1024 * 1024;
 const SUCCESS_CLOSE_DELAY_MS = 1000;
 const DEFAULT_MATCH = { matchCase: false, matchWholeWord: false } as const;
-
-type TabValue = "details" | "permissions";
 
 const clonePermissions = (role: AdminRole): AdminPermissions => getDefaultPermissionsForRole(role);
 
@@ -151,6 +151,7 @@ export const AdminDialog: FC = () => {
 	const admins = useAdminsStore((state) => state.admins);
 	const adminFromStore = useAdminsStore((state) => state.adminInDialog);
 	const isOpen = useAdminsStore((state) => state.isAdminDialogOpen);
+	const initialTab = useAdminsStore((state) => state.adminDialogInitialTab);
 	const closeAdminDialog = useAdminsStore((state) => state.closeAdminDialog);
 	const createAdmin = useAdminsStore((state) => state.createAdmin);
 	const fetchAdmins = useAdminsStore((state) => state.fetchAdmins);
@@ -278,7 +279,7 @@ export const AdminDialog: FC = () => {
 	});
 
 	const { register, handleSubmit, reset, formState, setValue, getValues, watch, setError } = form;
-	const [activeTab, setActiveTab] = useState<TabValue>("details");
+	const [activeTab, setActiveTab] = useState<AdminDialogTab>("details");
 	const [showPassword, setShowPassword] = useState(false);
 	const [serviceOptions, setServiceOptions] = useState<ServiceSummary[]>([]);
 	const [serviceSearch, setServiceSearch] = useState("");
@@ -466,7 +467,7 @@ export const AdminDialog: FC = () => {
 
 	useEffect(() => {
 		if (!isOpen) return;
-		setActiveTab("details");
+		setActiveTab(initialTab);
 		fetch<{ services: ServiceSummary[]; total?: number }>("/v2/services", { query: { limit: 500 } })
 			.then((resp) => {
 				const list = Array.isArray((resp as any).services)
@@ -534,7 +535,7 @@ export const AdminDialog: FC = () => {
 				]),
 			),
 		});
-	}, [adminFromStore, isOpen, reset]);
+	}, [adminFromStore, initialTab, isOpen, reset]);
 
 	useEffect(() => {
 		if (watchRole === AdminRole.FullAccess) {
@@ -1252,11 +1253,12 @@ export const AdminDialog: FC = () => {
 						</div>
 					</DialogHeader>
 
-					<Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabValue)} className="flex min-h-0 flex-1 flex-col">
+					<Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as AdminDialogTab)} className="flex min-h-0 flex-1 flex-col">
 						<div className="border-b px-5 pt-2.5 pb-2.5">
 							<TabsList className="w-full">
 								<TabsTrigger value="details">{t("details")}</TabsTrigger>
 								<TabsTrigger value="permissions">{t("admins.permissionsTabLabel")}</TabsTrigger>
+								{mode === "edit" && admin ? <TabsTrigger value="history">{t("adminHistory.tab")}</TabsTrigger> : null}
 							</TabsList>
 						</div>
 						<div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
@@ -1266,6 +1268,11 @@ export const AdminDialog: FC = () => {
 							<TabsContent value="permissions" className="mt-0">
 								{permissionsTab}
 							</TabsContent>
+							{mode === "edit" && admin ? (
+								<TabsContent value="history" className="mt-0">
+									<AdminHistoryPanel username={admin.username} />
+								</TabsContent>
+							) : null}
 						</div>
 					</Tabs>
 

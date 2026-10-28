@@ -2492,7 +2492,7 @@ export const NodesPage: FC = () => {
 			)}
 
 			<div className="border border-panel-border! bg-panel-surface rounded-xl overflow-hidden">
-				<OverviewBand total={nodeOverview.total} rows={nodeOverview.rows} distribution={nodeOverview.distribution} extra={nodeOverview.extra} locale={locale} />
+				<OverviewBand total={nodeOverview.total} rows={nodeOverview.rows} distribution={nodeOverview.distribution} extra={nodeOverview.extra} locale={locale} onSegmentSelect={(key) => setStatusFilter((current) => (current === key ? "all" : key))} selectedKey={statusFilter === "all" ? null : statusFilter} />
 				<div className="border-t border-panel-border! p-3">
 					<div className="flex flex-col gap-2 xl:flex-row xl:items-center">
 						<div className="min-w-0 flex-1">

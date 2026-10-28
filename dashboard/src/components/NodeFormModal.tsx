@@ -28,6 +28,7 @@ import {
 } from "contexts/NodesContext";
 import { FC, useCallback, useEffect, useState } from "react";
 import { type Resolver, Controller, useForm } from "react-hook-form";
+import { EmojiShortcodeInput } from "components/common/EmojiShortcodeInput";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
 import {
@@ -384,7 +385,21 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 								) : null}
 								<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 									<FormField label={t("nodes.nodeName")} error={getInputError(errors?.name)}>
-										<UiInput placeholder="Rebecca-S2" maxLength={120} aria-invalid={Boolean(errors?.name) || undefined} {...form.register("name")} />
+										<Controller
+											control={form.control}
+											name="name"
+											render={({ field }) => (
+												<EmojiShortcodeInput
+													ref={field.ref}
+													value={field.value ?? ""}
+													onChange={field.onChange}
+													onBlur={field.onBlur}
+													placeholder="Rebecca-S2"
+													maxLength={120}
+													aria-invalid={Boolean(errors?.name) || undefined}
+												/>
+											)}
+										/>
 									</FormField>
 									<FormField label={t("nodes.nodeAddress")} error={getInputError(errors?.address)}>
 										<UiInput placeholder="192.168.1.1 or 2001:db8::1" aria-invalid={Boolean(errors?.address) || undefined} {...form.register("address")} />
