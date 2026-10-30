@@ -1455,6 +1455,7 @@ export const InboundFormModal: FC<Props> = ({
 
 	return (
 		<Dialog
+			section="inbounds"
 			open={isOpen}
 			onOpenChange={(next) => {
 				if (!next) onClose();

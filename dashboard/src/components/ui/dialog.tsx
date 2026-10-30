@@ -2,15 +2,43 @@
 
 import * as React from "react"
 import { cn } from "lib/cn"
-import { XIcon } from "lucide-react"
+import { ArrowLeft, XIcon } from "lucide-react"
 import { Dialog as DialogPrimitive } from "radix-ui"
+import { useTranslation } from "react-i18next"
 
 import { Button } from "components/ui/button"
+import {
+  EDITOR_PAGE_ID,
+  ENTITY_PAGE_LABELS,
+  type EntityPageSection,
+  useActiveEntityPage,
+  useEntityPagePrefs,
+} from "lib/entityPages"
+
+const EntityPageContext = React.createContext<EntityPageSection | null>(null)
 
 function Dialog({
+  section,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+}: React.ComponentProps<typeof DialogPrimitive.Root> & {
+  section?: EntityPageSection
+}) {
+  const asPage = useEntityPagePrefs((state) => Boolean(section && state.pages[section]))
+  const open = Boolean(props.open)
+
+  React.useEffect(() => {
+    if (!section || !asPage || !open) return
+    useActiveEntityPage.getState().activate(section)
+    return () => useActiveEntityPage.getState().release(section)
+  }, [section, asPage, open])
+
+  const pageSection = asPage && section ? section : null
+
+  return (
+    <EntityPageContext.Provider value={pageSection}>
+      <DialogPrimitive.Root data-slot="dialog" modal={!pageSection} {...props} />
+    </EntityPageContext.Provider>
+  )
 }
 
 function DialogTrigger({
@@ -47,6 +75,23 @@ function DialogOverlay({
   )
 }
 
+function EntityPageBackLink({ section }: { section: EntityPageSection }) {
+  const { t } = useTranslation()
+
+  return (
+    <DialogPrimitive.Close asChild>
+      <button
+        type="button"
+        data-slot="entity-page-back"
+        className="inline-flex w-fit items-center gap-1.5 rounded-sm text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
+      >
+        <ArrowLeft className="size-4 rtl:rotate-180" />
+        {t(`entityPages.${section}`, ENTITY_PAGE_LABELS[section])}
+      </button>
+    </DialogPrimitive.Close>
+  )
+}
+
 function DialogContent({
   className,
   children,
@@ -55,6 +100,27 @@ function DialogContent({
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
 }) {
+  const pageSection = React.useContext(EntityPageContext)
+
+  if (pageSection) {
+    return (
+      <DialogPrimitive.Portal container={document.getElementById(EDITOR_PAGE_ID)}>
+        <DialogPrimitive.Content
+          data-slot="dialog-content"
+          className={cn(
+            className,
+            "static grid w-full max-w-[1100px] gap-4 border-0 bg-transparent p-0 shadow-none outline-none sm:max-w-[1100px] max-h-none overflow-visible"
+          )}
+          onInteractOutside={(event) => event.preventDefault()}
+          {...props}
+        >
+          <EntityPageBackLink section={pageSection} />
+          {children}
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    )
+  }
+
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
@@ -99,11 +165,14 @@ function DialogFooter({
 }: React.ComponentProps<"div"> & {
   showCloseButton?: boolean
 }) {
+  const pageSection = React.useContext(EntityPageContext)
+
   return (
     <div
       data-slot="dialog-footer"
       className={cn(
         "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
+        pageSection && "sticky bottom-0 z-10 border-t bg-panel-main py-3",
         className
       )}
       {...props}

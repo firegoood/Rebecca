@@ -906,6 +906,7 @@ const HostDialogShell: FC<HostDialogShellProps> = ({
 	const [tab, setTab] = useState("form");
 	return (
 		<Dialog
+			section="hosts"
 			open={isOpen}
 			onOpenChange={(next) => {
 				if (!next) onClose();

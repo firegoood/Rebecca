@@ -322,6 +322,7 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 
 	return (
 		<Dialog
+			section="nodes"
 			open={isOpen}
 			onOpenChange={(open) => {
 				if (!open && !isLoading) handleClose();

@@ -1229,6 +1229,7 @@ export const AdminDialog: FC = () => {
 
 	return (
 		<Dialog
+			section="admins"
 			open={isOpen}
 			onOpenChange={(open) => {
 				if (!open && !isSubmitting) handleCloseAdminDialog();

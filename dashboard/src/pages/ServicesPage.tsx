@@ -391,6 +391,7 @@ const ServiceDialog: FC<ServiceDialogProps> = ({
 
 	return (
 		<Dialog
+			section="services"
 			open={isOpen}
 			onOpenChange={(open) => {
 				if (!open && !isSaving) onClose();

@@ -1671,6 +1671,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 
 	return (
 		<Dialog
+			section="users"
 			open={isOpen}
 			onOpenChange={(open) => {
 				if (!open && !loading) onClose();

@@ -22,6 +22,7 @@ import {
 	type PointerEvent as ReactPointerEvent,
 	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -40,6 +41,7 @@ import { useDisclosure } from "hooks/useDisclosure";
 import { useMediaQuery } from "hooks/useMediaQuery";
 
 import { cn } from "lib/cn";
+import { EDITOR_PAGE_ID, useActiveEntityPage } from "lib/entityPages";
 import { GitHubStars } from "./GitHubStars";
 import { HeaderCalendar } from "./HeaderCalendar";
 import { NotificationBell } from "./NotificationBell";
@@ -97,6 +99,14 @@ type BottomNavItem = {
 };
 
 export function AppLayout() {
+	const editorPageSection = useActiveEntityPage((state) => state.section);
+	const mainRef = useRef<HTMLElement>(null);
+	const listScrollTop = useRef(0);
+	useLayoutEffect(() => {
+		if (mainRef.current) {
+			mainRef.current.scrollTop = editorPageSection ? 0 : listScrollTop.current;
+		}
+	}, [editorPageSection]);
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 	const isMobile = !useMediaQuery("(min-width: 48em)");
 	const sidebarDrawer = useDisclosure();
@@ -998,8 +1008,17 @@ export function AppLayout() {
 						</div>
 					</header>
 
-					<main className="min-h-0 flex-1 overflow-auto bg-panel-main p-3 pb-40 md:p-4 md:pb-4">
-						<Outlet />
+					<main
+						ref={mainRef}
+						onScroll={(event) => {
+							if (!editorPageSection) listScrollTop.current = event.currentTarget.scrollTop;
+						}}
+						className="min-h-0 flex-1 overflow-auto bg-panel-main p-3 pb-40 md:p-4 md:pb-4"
+					>
+						<div className={cn(editorPageSection && "hidden")}>
+							<Outlet />
+						</div>
+						<div id={EDITOR_PAGE_ID} className={cn(!editorPageSection && "hidden")} />
 					</main>
 				</div>
 
