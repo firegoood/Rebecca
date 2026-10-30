@@ -7,6 +7,8 @@ import { Dialog as DialogPrimitive } from "radix-ui"
 import { useTranslation } from "react-i18next"
 
 import { Button } from "components/ui/button"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "components/ui/tabs"
+import type { EntityPageInfo } from "components/entityPage/EntityPageParts"
 import {
   EDITOR_PAGE_ID,
   ENTITY_PAGE_LABELS,
@@ -15,27 +17,34 @@ import {
   useEntityPagePrefs,
 } from "lib/entityPages"
 
-const EntityPageContext = React.createContext<EntityPageSection | null>(null)
+type EntityPageState = { section: EntityPageSection; page?: EntityPageInfo }
+
+const EntityPageContext = React.createContext<EntityPageState | null>(null)
 
 function Dialog({
   section,
+  page,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root> & {
   section?: EntityPageSection
+  page?: EntityPageInfo
 }) {
   const asPage = useEntityPagePrefs((state) => Boolean(section && state.pages[section]))
   const open = Boolean(props.open)
 
+  const pageTitle = typeof page?.title === "string" ? page.title : undefined
+
   React.useEffect(() => {
     if (!section || !asPage || !open) return
-    useActiveEntityPage.getState().activate(section)
+    useActiveEntityPage.getState().activate(section, pageTitle)
     return () => useActiveEntityPage.getState().release(section)
-  }, [section, asPage, open])
+  }, [section, asPage, open, pageTitle])
 
   const pageSection = asPage && section ? section : null
+  const pageState = pageSection ? { section: pageSection, page } : null
 
   return (
-    <EntityPageContext.Provider value={pageSection}>
+    <EntityPageContext.Provider value={pageState}>
       <DialogPrimitive.Root data-slot="dialog" modal={!pageSection} {...props} />
     </EntityPageContext.Provider>
   )
@@ -92,6 +101,47 @@ function EntityPageBackLink({ section }: { section: EntityPageSection }) {
   )
 }
 
+function EntityPageBody({
+  page,
+  children,
+}: {
+  page: EntityPageInfo
+  children: React.ReactNode
+}) {
+  const { t } = useTranslation()
+  const [tab, setTab] = React.useState<"overview" | "settings">("overview")
+
+  return (
+    <>
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="flex min-w-0 flex-col gap-1">
+          <h2 className="truncate text-xl font-semibold text-panel-text">{page.title}</h2>
+          {page.subtitle ? (
+            <p className="truncate font-mono text-sm text-panel-text-secondary">{page.subtitle}</p>
+          ) : null}
+        </div>
+        {page.status}
+      </div>
+      <Tabs value={tab} onValueChange={(value) => setTab(value as "overview" | "settings")}>
+        <TabsList variant="line" className="w-full justify-start border-b">
+          <TabsTrigger value="overview">{t("entityPages.overview", "Overview")}</TabsTrigger>
+          <TabsTrigger value="settings">{t("entityPages.settings", "Settings")}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="overview" forceMount className="pt-4 data-[state=inactive]:hidden">
+          {page.overview}
+        </TabsContent>
+        <TabsContent
+          value="settings"
+          forceMount
+          className="flex flex-col gap-4 pt-4 data-[state=inactive]:hidden [&_[data-slot=dialog-header]]:sr-only"
+        >
+          {children}
+        </TabsContent>
+      </Tabs>
+    </>
+  )
+}
+
 function DialogContent({
   className,
   children,
@@ -100,22 +150,22 @@ function DialogContent({
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
 }) {
-  const pageSection = React.useContext(EntityPageContext)
+  const pageState = React.useContext(EntityPageContext)
 
-  if (pageSection) {
+  if (pageState) {
     return (
       <DialogPrimitive.Portal container={document.getElementById(EDITOR_PAGE_ID)}>
         <DialogPrimitive.Content
           data-slot="dialog-content"
           className={cn(
             className,
-            "static grid w-full max-w-[1100px] gap-4 border-0 bg-transparent p-0 shadow-none outline-none sm:max-w-[1100px] max-h-none overflow-visible"
+            "static mx-auto grid w-full max-w-[1200px] gap-5 border-0 bg-transparent p-0 shadow-none outline-none sm:max-w-[1200px] max-h-none overflow-visible"
           )}
           onInteractOutside={(event) => event.preventDefault()}
           {...props}
         >
-          <EntityPageBackLink section={pageSection} />
-          {children}
+          <EntityPageBackLink section={pageState.section} />
+          {pageState.page ? <EntityPageBody page={pageState.page}>{children}</EntityPageBody> : children}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     )
@@ -165,14 +215,14 @@ function DialogFooter({
 }: React.ComponentProps<"div"> & {
   showCloseButton?: boolean
 }) {
-  const pageSection = React.useContext(EntityPageContext)
+  const pageState = React.useContext(EntityPageContext)
 
   return (
     <div
       data-slot="dialog-footer"
       className={cn(
         "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
-        pageSection && "sticky bottom-0 z-10 border-t bg-panel-main py-3",
+        pageState && "sticky bottom-0 z-10 border-t bg-panel-main py-3",
         className
       )}
       {...props}

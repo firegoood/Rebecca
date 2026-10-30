@@ -98,8 +98,14 @@ type BottomNavItem = {
 	kind?: "menu" | "link";
 };
 
+const breadcrumbLabels: Record<string, string> = {
+	"node-settings": "nodes",
+	"xray-settings": "xray",
+};
+
 export function AppLayout() {
 	const editorPageSection = useActiveEntityPage((state) => state.section);
+	const editorPageTitle = useActiveEntityPage((state) => state.title);
 	const mainRef = useRef<HTMLElement>(null);
 	const listScrollTop = useRef(0);
 	useLayoutEffect(() => {
@@ -746,7 +752,7 @@ export function AppLayout() {
 		"/usage": "services",
 		"/xray-settings": "basic",
 	};
-	const locationTrail = [
+	const routeTrail = [
 		"dashboard",
 		...location.pathname.split("/").filter(Boolean),
 		activeLocationHash.replace(/^#/, "") ||
@@ -754,7 +760,8 @@ export function AppLayout() {
 			"",
 	]
 		.filter(Boolean)
-		.map((part) => part.replace(/[-_]+/g, " "));
+		.map((part) => breadcrumbLabels[part] ?? part.replace(/[-_]+/g, " "));
+	const locationTrail = editorPageTitle ? [...routeTrail, editorPageTitle] : routeTrail;
 	const openCurrentPage = () => {
 		const defaultTab = settingsDefaultTabByPath[location.pathname];
 		if (defaultTab) {
@@ -838,7 +845,7 @@ export function AppLayout() {
 									</BreadcrumbItem>
 									{locationTrail.length > 1 && (
 										<>
-											<BreadcrumbSeparator className="text-panel-text-muted">→</BreadcrumbSeparator>
+											<BreadcrumbSeparator className="text-panel-text-muted">/</BreadcrumbSeparator>
 											<BreadcrumbItem>
 												<BreadcrumbLink asChild>
 													<button
@@ -853,12 +860,12 @@ export function AppLayout() {
 										</>
 									)}
 									{locationTrail.length > 2 && (
-										<BreadcrumbSeparator className="text-panel-text-muted">→</BreadcrumbSeparator>
+										<BreadcrumbSeparator className="text-panel-text-muted">/</BreadcrumbSeparator>
 									)}
 									{locationTrail.length > 2 && (
 										<BreadcrumbItem className="min-w-0">
 											<BreadcrumbPage className="truncate text-xs font-semibold text-panel-text-secondary md:text-sm">
-												{locationTrail.slice(2).join(" → ")}
+												{locationTrail.slice(2).join(" / ")}
 											</BreadcrumbPage>
 										</BreadcrumbItem>
 									)}

@@ -50,11 +50,15 @@ export const useEntityPagePrefs = create<{
 
 export const useActiveEntityPage = create<{
 	section: EntityPageSection | null;
-	activate: (section: EntityPageSection) => void;
+	title: string | null;
+	activate: (section: EntityPageSection, title?: string) => void;
 	release: (section: EntityPageSection) => void;
 }>((set) => ({
 	section: null,
-	activate: (section) => set({ section }),
+	title: null,
+	activate: (section, title) => set({ section, title: title ?? null }),
 	release: (section) =>
-		set((state) => (state.section === section ? { section: null } : state)),
+		set((state) =>
+			state.section === section ? { section: null, title: null } : state,
+		),
 }));

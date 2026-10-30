@@ -13,6 +13,7 @@ import { DataSizeField } from "components/ui/data-size-field";
 import { FieldHint } from "components/ui/field-hint";
 import { FormField } from "components/ui/form-field";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "components/ui/dialog";
+import { serviceEntityPage } from "components/entityPage/EntityOverviews";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "components/ui/tabs";
 import { buttonVariants } from "components/ui/button";
 import { Badge as UiBadge } from "components/ui/badge";
@@ -392,6 +393,7 @@ const ServiceDialog: FC<ServiceDialogProps> = ({
 	return (
 		<Dialog
 			section="services"
+			page={initialService ? serviceEntityPage(initialService) : undefined}
 			open={isOpen}
 			onOpenChange={(open) => {
 				if (!open && !isSaving) onClose();
