@@ -13,6 +13,7 @@ import { useClipboard } from "hooks/useClipboard";
 
 import { CheckRow } from "components/ui/check-row";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "components/ui/dialog";
+import { nodeEntityPage } from "components/entityPage/EntityOverviews";
 import { FormField } from "components/ui/form-field";
 import { Input as UiInput } from "components/ui/input";
 import { DataSizeField } from "components/ui/data-size-field";
@@ -322,6 +323,8 @@ export const NodeFormModal: FC<NodeFormModalProps> = ({
 
 	return (
 		<Dialog
+			section="nodes"
+			page={!isAddMode && node ? nodeEntityPage(node) : undefined}
 			open={isOpen}
 			onOpenChange={(open) => {
 				if (!open && !isLoading) handleClose();

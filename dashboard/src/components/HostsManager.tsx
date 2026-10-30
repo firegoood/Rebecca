@@ -23,6 +23,8 @@ import { Switch as UiSwitch } from "components/ui/switch";
 import { buttonVariants } from "components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "components/ui/collapsible";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "components/ui/dialog";
+import { hostEntityPage } from "components/entityPage/EntityOverviews";
+import type { EntityPageInfo } from "components/entityPage/EntityPageParts";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "components/ui/tabs";
 import { ChevronDown, Network, RefreshCw, CircleCheck, Info, Pencil, Plus, Trash2, CircleX } from "lucide-react";
 
@@ -890,6 +892,7 @@ type HostDialogShellProps = {
 	form: ReactNode;
 	json: ReactNode;
 	footer: ReactNode;
+	page?: EntityPageInfo;
 };
 
 const HostDialogShell: FC<HostDialogShellProps> = ({
@@ -901,11 +904,14 @@ const HostDialogShell: FC<HostDialogShellProps> = ({
 	form,
 	json,
 	footer,
+	page,
 }) => {
 	const { t } = useTranslation();
 	const [tab, setTab] = useState("form");
 	return (
 		<Dialog
+			section="hosts"
+			page={page}
 			open={isOpen}
 			onOpenChange={(next) => {
 				if (!next) onClose();
@@ -1465,6 +1471,7 @@ const HostDetailModal: FC<HostDetailModalProps> = ({
 		<HostDialogShell
 			open={isOpen}
 			onClose={onClose}
+			page={!isCloneMode && host.data.id ? hostEntityPage(host.data, host.inboundTag) : undefined}
 			title={<AppleEmojiText>{isCloneMode ? t("hostsPage.clone.title") : host.data.remark || t("hostsPage.untitledHost")}</AppleEmojiText>}
 			subtitle={isCloneMode ? t("hostsPage.clone.description") : undefined}
 			form={

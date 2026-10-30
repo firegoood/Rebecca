@@ -19,6 +19,7 @@ import { NumberField } from "components/ui/number-field";
 import { SegmentedControl } from "components/ui/segmented-control";
 import { InboundSectionNav } from "./InboundSectionNav";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "components/ui/dialog";
+import { inboundEntityPage } from "components/entityPage/EntityOverviews";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "components/ui/tabs";
 import { buttonVariants } from "components/ui/button";
 import { Loader2, Network, Plus, RefreshCw, Sparkles } from "lucide-react";
@@ -1455,6 +1456,8 @@ export const InboundFormModal: FC<Props> = ({
 
 	return (
 		<Dialog
+			section="inbounds"
+			page={mode === "edit" && initialValue ? inboundEntityPage(initialValue) : undefined}
 			open={isOpen}
 			onOpenChange={(next) => {
 				if (!next) onClose();

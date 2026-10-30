@@ -14,6 +14,7 @@ import { Badge } from "components/ui/badge";
 import { DateTimeField } from "components/ui/date-time-field";
 import { DataSizeField } from "components/ui/data-size-field";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "components/ui/dialog";
+import { adminEntityPage } from "components/entityPage/EntityOverviews";
 import { FormField } from "components/ui/form-field";
 import { Input } from "components/ui/input";
 import { CheckRow } from "components/ui/check-row";
@@ -1229,6 +1230,8 @@ export const AdminDialog: FC = () => {
 
 	return (
 		<Dialog
+			section="admins"
+			page={admin ? adminEntityPage(admin) : undefined}
 			open={isOpen}
 			onOpenChange={(open) => {
 				if (!open && !isSubmitting) handleCloseAdminDialog();
