@@ -375,7 +375,7 @@ export const BalancerModal: FC<BalancerModalProps> = ({
 							
 								<TabsContent value="form" className="px-0">
 									<div className="flex flex-col gap-3 items-stretch">
-										<XrayDialogSection title={t("pages.xray.balancer.addBalancer")}>
+										<XrayDialogSection title={mode === "edit" ? t("pages.xray.balancer.editBalancer") : t("pages.xray.balancer.addBalancer")}>
 											<div className="flex flex-col gap-4 items-stretch">
 												<Field data-invalid={duplicateTag}>
 													<FieldLabel>{t("pages.xray.balancer.tag")}</FieldLabel>
